@@ -1,0 +1,17 @@
+[
+  {
+    "arguments": [
+      "/usr/lib64/ccache/gcc",
+      "-c",
+      "-Wall",
+      "-Wextra",
+      "-O3",
+      "-o",
+      "build/init",
+      "main.c"
+    ],
+    "directory": "/home/daniliammo/MINIMAL-LINUX/Инициализация",
+    "file": "/home/daniliammo/MINIMAL-LINUX/Инициализация/main.c",
+    "output": "/home/daniliammo/MINIMAL-LINUX/Инициализация/build/init"
+  }
+]

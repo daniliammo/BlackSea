@@ -1,0 +1,12 @@
+[submodule "Программы/ТранспиляторКонда"]
+	path = Программы/ТранспиляторКонда
+	url = https://github.com/daniliammo/Konda
+[submodule "Программы/Инициализация"]
+	path = Программы/Инициализация
+	url = https://github.com/daniliammo/BlackSeaInit
+[submodule "Программы/busybox"]
+	path = Программы/busybox
+	url = https://git.busybox.net/busybox
+[submodule "Программы/Ядро"]
+	path = Программы/Ядро
+	url = https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git

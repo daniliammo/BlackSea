@@ -1,0 +1,4 @@
+proc      /proc            proc      rw,nosuid,noexec,relatime,async 0  0
+sysfs     /sys             sysfs     rw,nosuid,noexec,relatime,async 0  0
+
+PARTUUID=77A7-77A7  /boot  vfat      rw,nosuid,noexec,relatime,sync  0  2

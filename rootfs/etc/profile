@@ -1,0 +1,14 @@
+#!/bin/bash
+# /etc/profile
+
+export PATH="/bin"
+export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
+export TERM=xterm-256color
+
+# Для интерактивных сессий
+if [ -n "$PS1" ]; then
+    alias ls='ls --color=auto'
+    alias grep='grep --color=auto'
+    alias fgrep='fgrep --color=auto'
+    alias egrep='egrep --color=auto'
+fi
