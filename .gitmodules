@@ -10,3 +10,6 @@
 [submodule "Программы/Ядро"]
 	path = Программы/Ядро
 	url = https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git
+[submodule "Программы/KondaFromClang"]
+	path = Программы/KondaFromClang
+	url = https://github.com/daniliammo/Konda-From-Clang
