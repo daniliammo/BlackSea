@@ -6,6 +6,8 @@
 .cache/
 .idea/
 
+**/Собранное/
+
 # Prerequisites
 *.d
 
