@@ -2,13 +2,36 @@
 # Отключает debug / profiling / трассировку / сбор статистики и часть legacy.
 # dmesg (printk) сохраняется — только он остаётся как канал диагностики.
 #
-# Запуск из корня дерева ядра, где лежит .config:
-#   ./strip-config.sh           — изменить текущий .config
-#   ./strip-config.sh path/.cfg — изменить указанный файл
+# Можно запускать откуда угодно (например, из Программы/Сборка) — скрипт сам
+# находит дерево ядра в Программы/Ядро и переходит в него:
+#   ./strip-config.sh           — изменить .config в дереве ядра
+#   ./strip-config.sh path/.cfg — изменить указанный файл (путь от текущей папки)
 
 set -euo pipefail
 
-CONFIG="${1:-.config}"
+# Пути считаются относительно расположения скрипта, а не текущей папки.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Ядро лежит в сабмодуле Программы/Ядро (сосед Программы/Сборка).
+KERNEL_DIR="$SCRIPT_DIR/../Ядро"
+ORIG_PWD="$PWD"
+
+if [[ ! -d "$KERNEL_DIR" ]]; then
+    echo "Не найдено дерево ядра: $KERNEL_DIR" >&2
+    exit 1
+fi
+
+# Аргумент с путём к конфигу трактуем относительно папки запуска (до cd в ядро);
+# без аргумента берём .config из корня дерева ядра.
+if [[ -n "${1:-}" ]]; then
+    case "$1" in
+        /*) CONFIG="$1" ;;
+        *)  CONFIG="$ORIG_PWD/$1" ;;
+    esac
+else
+    CONFIG="$KERNEL_DIR/.config"
+fi
+
+cd "$KERNEL_DIR"
 
 if [[ ! -f "$CONFIG" ]]; then
     echo "Не найден $CONFIG. Сначала сгенерируйте конфиг (make defconfig / oldconfig)." >&2
@@ -16,7 +39,7 @@ if [[ ! -f "$CONFIG" ]]; then
 fi
 
 if [[ ! -x scripts/config ]]; then
-    echo "scripts/config не найден — запустите скрипт из корня дерева ядра." >&2
+    echo "scripts/config не найден — проверьте, что дерево ядра распаковано в $KERNEL_DIR." >&2
     exit 1
 fi
 
