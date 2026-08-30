@@ -19,6 +19,13 @@ export XDG_RUNTIME_DIR=/run/user/0
 mkdir -p "$XDG_RUNTIME_DIR"
 chmod 0700 "$XDG_RUNTIME_DIR"
 
+# /dev/pts — псевдотерминалы для weston-terminal (forkpty). Создаём и монтируем
+# здесь, а не в /etc/profile: init запускает не-login sh, профиль не читается.
+# И статически /dev/pts не положить — devtmpfs перекрывает /dev и прячет его.
+[ -d /dev/pts ] || mkdir -p /dev/pts
+mountpoint -q /dev/pts 2>/dev/null || \
+    mount -t devpts devpts /dev/pts -o gid=5,mode=620,ptmxmode=666 2>/dev/null || true
+
 # Встроенный бэкенд libseat: без демона seatd и без logind (нужен root).
 export LIBSEAT_BACKEND=builtin
 

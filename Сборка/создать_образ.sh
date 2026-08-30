@@ -160,6 +160,13 @@ sudo mount "${LOOP_DEV}p2" mnt/root
 
 sudo cp -a "$ROOTFS_DIR"/. mnt/root/
 
+# Гарантируем стандартные пустые каталоги — точки монтирования. git не хранит
+# пустые папки, поэтому на свежем клоне их может не быть; без них mount -a и
+# работа системы ломаются. Создаём, если отсутствуют (cp -a их не восстановит).
+# /dev/pts здесь не нужен: devtmpfs перекрывает /dev, его монтируют в рантайме.
+sudo mkdir -p mnt/root/proc mnt/root/sys mnt/root/dev mnt/root/run \
+             mnt/root/tmp mnt/root/mnt mnt/root/root mnt/root/home
+
 sudo umount mnt/root
 
 # Монтировать ESP раздел
