@@ -13,9 +13,7 @@
 
 # Object files
 *.o
-*.ko
 *.obj
-*.elf
 
 # Linker output
 *.ilk
@@ -31,15 +29,6 @@
 *.a
 *.la
 *.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
-*.so
-*.so.*
-*.dylib
-# ...но конфиг путей динамического загрузчика в rootfs версионируем:
-# его читает создать_образ.sh при генерации ld.so.cache, без него система не грузится.
-!rootfs/etc/ld.so.conf
 
 # Executables
 *.exe
