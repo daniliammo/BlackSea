@@ -5,8 +5,8 @@ set -e
 
 # Resolve paths relative to this script's location, so it can be run from anywhere.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Kernel lives in the submodule Программы/Ядро (sibling of Программы/Сборка).
-KERNEL_DIR="$SCRIPT_DIR/../Ядро"
+# Kernel lives in the submodule Программы/Ядро (in Программы/, sibling of Сборка).
+KERNEL_DIR="$SCRIPT_DIR/../Программы/Ядро"
 REPO_URL="https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git"
 
 # Get latest stable tag (not RC) from remote
