@@ -1,0 +1,10 @@
+id = "konda"
+name = "Konda"
+version = "0.1.0"
+schema_version = 1
+languages = ["languages/konda"]
+
+[grammars.konda]
+repository = "file:///home/danil/MINIMAL-LINUX/Программы/ТранспиляторКонда/tools/konda-grammar"
+rev = "8a756c2da2ff3a7c87934adf3d589bfdcba567bc"
+

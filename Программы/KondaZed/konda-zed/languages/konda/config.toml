@@ -1,0 +1,5 @@
+name = "Konda"
+grammar = "konda"
+path_suffixes = ["конда"]
+line_comments = ["// "]
+block_comment = ["/*", "*/"]
