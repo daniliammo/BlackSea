@@ -130,7 +130,7 @@ jobs:
         run: mkdir -p ОбразыДляЗагрузки
 
       - name: Создание образа (.img)
-        run: ./создать_образ.sh
+        run: Сборка/создать_образ.sh
 
       - name: Конвертация в qcow2 (qemu-img, без VirtualBox)
         run: |
