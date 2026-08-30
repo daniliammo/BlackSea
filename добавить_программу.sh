@@ -98,10 +98,23 @@ process_bin() {
     local binname; binname="$(basename "$bin")"
     info "Бинарник: $binname  ($bin)"
     resolve_deps "$bin"
-    cp -L "$bin" "$BIN_DIR/$binname"
-    chmod 0755 "$BIN_DIR/$binname"
-    maybe_strip "$BIN_DIR/$binname"
-    ok "бинарник → bin/$binname"
+
+    # Выбор каталога назначения. Программы из /usr/local/ (bin, sbin, libexec)
+    # зовутся по АБСОЛЮТНОМУ пути: weston грузит хелперы из /usr/local/libexec,
+    # а weston-desktop-shell запускает /usr/local/bin/weston-terminal. Поэтому
+    # такие кладём по тому же абсолютному пути в rootfs, а не в /bin.
+    # Остальное (обычные /bin, /usr/bin) — в rootfs/bin (это /bin, он в PATH).
+    local srcdir destdir
+    srcdir="$(cd "$(dirname "$bin")" && pwd)"
+    case "$srcdir" in
+        /usr/local/*) destdir="$ROOTFS_DIR$srcdir" ;;
+        *)            destdir="$BIN_DIR" ;;
+    esac
+    mkdir -p "$destdir"
+    cp -L "$bin" "$destdir/$binname"
+    chmod 0755 "$destdir/$binname"
+    maybe_strip "$destdir/$binname"
+    ok "бинарник → ${destdir#$ROOTFS_DIR}/$binname"
 }
 
 # Обработать каталог модулей: зеркалировать *.so по абсолютному пути + их deps.
