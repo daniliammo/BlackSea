@@ -5,6 +5,15 @@ export PATH="/bin:/usr/local/bin:/usr/local/sbin"
 export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export TERM=xterm-256color
 
+# /dev/pts — псевдотерминалы. Нужен для weston-terminal (forkpty) и любого
+# pty-софта. devtmpfs его не создаёт, а systemd/udev тут нет — монтируем сами
+# (как root, идемпотентно: повторный вход просто пропустит уже смонтированное).
+if [ -w /dev ]; then
+    [ -d /dev/pts ] || mkdir -p /dev/pts
+    mountpoint -q /dev/pts 2>/dev/null || \
+        mount -t devpts devpts /dev/pts -o gid=5,mode=620,ptmxmode=666 2>/dev/null || true
+fi
+
 # weston на root-only системе (без systemd/logind): встроенный бэкенд libseat
 # и каталог рантайма. Благодаря этому даже прямой запуск `weston` работает —
 # libseat не пытается достучаться до seatd.sock/logind.
