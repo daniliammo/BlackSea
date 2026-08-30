@@ -93,9 +93,19 @@ sudo parted -s "$LOOP_DEV" set 1 esp on
 sudo parted -s "$LOOP_DEV" mkpart primary ext4 "${ESP_MB}MiB" 100%
 sudo parted -s "$LOOP_DEV" name 2 "ROOTFS"
 
-# Обновить таблицу разделов
+# Обновить таблицу разделов и дождаться появления узлов разделов.
+# На CI-раннерах узлы ${LOOP_DEV}p1/p2 появляются не мгновенно — ждём явно,
+# иначе mkfs падает с «No such file or directory».
 sudo partprobe "$LOOP_DEV"
-sleep 0.2
+command -v udevadm >/dev/null && sudo udevadm settle || true
+for _ in $(seq 1 50); do
+    [[ -b "${LOOP_DEV}p1" && -b "${LOOP_DEV}p2" ]] && break
+    sleep 0.2
+done
+if [[ ! -b "${LOOP_DEV}p1" || ! -b "${LOOP_DEV}p2" ]]; then
+    echo "Ошибка: разделы ${LOOP_DEV}p1/p2 не появились" >&2
+    exit 1
+fi
 
 # Форматировать разделы с ФИКСИРОВАННЫМ UUID
 echo ""

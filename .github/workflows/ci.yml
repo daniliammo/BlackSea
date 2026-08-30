@@ -1,0 +1,147 @@
+name: Сборка ОС Чёрное Море
+
+# Запуск на каждый коммит (push в любую ветку) и на pull request.
+on:
+  push:
+  pull_request:
+
+# На быстрых сериях коммитов оставляем актуальным только последний запуск ветки.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Быстрые проверки: синтаксис скриптов + компиляция оркестратора.
+  #    Без субмодулей и без sudo — секунды.
+  # ---------------------------------------------------------------------------
+  checks:
+    name: Проверки (скрипты + основа.c)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Установка shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Синтаксис shell-скриптов (bash -n) — жёсткая проверка
+        run: |
+          set -e
+          git -c core.quotepath=false ls-files '*.sh' | while IFS= read -r f; do
+            echo "bash -n $f"
+            bash -n "$f"
+          done
+
+      - name: shellcheck (информационно, не блокирует)
+        continue-on-error: true
+        run: |
+          git -c core.quotepath=false ls-files '*.sh' | while IFS= read -r f; do
+            echo "== $f =="
+            shellcheck -S warning "$f" || true
+          done
+
+      - name: Компиляция оркестратора основа.c
+        run: |
+          gcc -Wall -Wextra -O3 -s -fdata-sections -ffunction-sections \
+              -Wl,--gc-sections -flto -fno-stack-protector \
+              "Сборка/основа.c" -o /tmp/orchestrator
+          echo "Компиляция основа.c: OK"
+
+  # ---------------------------------------------------------------------------
+  # 2. Сборка ядра — ТОЛЬКО bzImage (без модулей), ядро клонируется без истории.
+  # ---------------------------------------------------------------------------
+  kernel:
+    name: Сборка ядра (bzImage, без модулей)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Зависимости сборки ядра
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential flex bison libssl-dev \
+            libelf-dev bc libncurses-dev dwarves cpio kmod ccache
+
+      - name: Клонирование ядра без истории (shallow, depth 1)
+        run: git submodule update --init --depth 1 "Программы/Ядро"
+
+      - name: Восстановление версионированного конфига ядра
+        run: cp "Сборка/ядро.config" "Программы/Ядро/.config"
+
+      - name: Кэш ccache (ускоряет повторные сборки)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-kernel-${{ github.sha }}
+          restore-keys: |
+            ccache-kernel-
+
+      - name: Сборка bzImage (модули НЕ собираются — цель bzImage)
+        run: |
+          export PATH="/usr/lib/ccache:$PATH"
+          cd "Программы/Ядро"
+          make olddefconfig
+          make -j"$(nproc)" bzImage
+          ls -la arch/x86/boot/bzImage
+
+      - name: Копирование ядра в boot/
+        run: cp "Программы/Ядро/arch/x86/boot/bzImage" boot/bzImage
+
+      - name: Артефакт bzImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: bzImage
+          path: boot/bzImage
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # 3. Создание образа из закоммиченного rootfs + свежесобранного ядра.
+  #    БЕЗ VBoxManage: .img создаётся скриптом, дополнительно даём qcow2 (qemu).
+  # ---------------------------------------------------------------------------
+  image:
+    name: Создание образа (.img + qcow2, без VirtualBox)
+    needs: kernel
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false
+          fetch-depth: 1
+
+      - name: Скачать собранное ядро в boot/
+        uses: actions/download-artifact@v4
+        with:
+          name: bzImage
+          path: boot
+
+      - name: Зависимости создания образа
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y parted gdisk dosfstools e2fsprogs \
+            symlinks util-linux libc-bin qemu-utils
+
+      - name: Каталог для образов (в git пуст)
+        run: mkdir -p ОбразыДляЗагрузки
+
+      - name: Создание образа (.img)
+        run: ./создать_образ.sh
+
+      - name: Конвертация в qcow2 (qemu-img, без VirtualBox)
+        run: |
+          qemu-img convert -f raw -O qcow2 \
+            "ОбразыДляЗагрузки/ОСЧерноеМоре.img" \
+            "ОбразыДляЗагрузки/ОСЧерноеМоре.qcow2"
+          ls -la ОбразыДляЗагрузки/
+
+      - name: Артефакт образа (qcow2)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ОСЧерноеМоре-qcow2
+          path: ОбразыДляЗагрузки/ОСЧерноеМоре.qcow2
+          if-no-files-found: error
