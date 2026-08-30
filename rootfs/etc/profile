@@ -5,6 +5,13 @@ export PATH="/bin"
 export PS1='\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ '
 export TERM=xterm-256color
 
+# weston на root-only системе (без systemd/logind): встроенный бэкенд libseat
+# и каталог рантайма. Благодаря этому даже прямой запуск `weston` работает —
+# libseat не пытается достучаться до seatd.sock/logind.
+export XDG_RUNTIME_DIR=/run/user/0
+[ -d "$XDG_RUNTIME_DIR" ] || { mkdir -p "$XDG_RUNTIME_DIR" && chmod 0700 "$XDG_RUNTIME_DIR"; }
+export LIBSEAT_BACKEND=builtin
+
 # Для интерактивных сессий
 if [ -n "$PS1" ]; then
     alias ls='ls --color=auto'
