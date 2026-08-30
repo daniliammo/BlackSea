@@ -5,8 +5,13 @@
 
 ## О проекте
 Минималистичный Linux-дистрибутив на **busybox**, загрузка через **UEFI**
-(ядро — EFI-stub, `EFI/BOOT/BOOTX64.EFI`). Цель — VirtualBox / QEMU.
-Один пользователь — **root**. **Нет** systemd / udev / dbus / logind.
+(ядро — EFI-stub, `EFI/BOOT/BOOTX64.EFI`). Один пользователь — **root**.
+**Нет** systemd / udev / dbus / logind.
+
+**Главная цель — нормальная графика на обычном ПК с реальным GPU** (аппаратное
+ускорение, weston на GL-рендере через Mesa и родной DRM-драйвер). VirtualBox /
+QEMU и программный рендер (pixman) — это **только для разработки, отладки и
+fallback**, не конечная цель. См. раздел про рендер ниже.
 
 ## Структура репозитория
 - `rootfs/` — корневая ФС (попадает в образ). Библиотеки — в `lib64`.
@@ -71,10 +76,17 @@ cd Сборка && make          # оркестратор: программы �
 ### Weston (рабочая конфигурация)
 - **seat**: `LIBSEAT_BACKEND=builtin` — встроенный бэкенд libseat, **без демона seatd
   и без logind** (logind не работает — нет systemd-сессии).
-- **рендер**: **pixman** (`/etc/xdg/weston/weston.ini` → `[core] renderer=pixman`
-  + флаг в `run-weston`). **Без Mesa** — не нужны `libgallium`+`libLLVM` (~150 МБ).
-- **GPU в VirtualBox**: графика **VBoxVGA** → драйвер `vboxvideo` (dumb-буферы для
-  pixman). **НЕ VMSVGA** (`vmwgfx` + pixman ненадёжно).
+- **рендер**:
+  - **Цель (обычный ПК): GL-рендер на реальном GPU** — нужны Mesa
+    (`libgallium`, `libLLVM`, `dri/*_dri.so` → симлинки на `libdril_dri.so`,
+    `gbm/dri_gbm.so`) в rootfs + родной DRM-драйвер GPU (`i915`/`amdgpu`/`nouveau`)
+    как `=y` в ядре. Это ещё НЕ сделано — основная задача.
+  - **Fallback/дебаг (VM): pixman** (`/etc/xdg/weston/weston.ini` →
+    `[core] renderer=pixman` + флаг в `run-weston`). Без Mesa, программный рендер.
+    Использовать только для отладки; для реальной работы вернуть GL-рендер.
+- **GPU в VirtualBox (дебаг)**: графика **VBoxVGA** → драйвер `vboxvideo`
+  (dumb-буферы для pixman). **НЕ VMSVGA** (`vmwgfx` + pixman ненадёжно). Это путь
+  для VM-отладки; на реальном железе — родной GPU-драйвер + Mesa (см. выше).
 - **ввод**: **libudev-zero** заменяет `libudev.so.1` — синтезирует `ID_INPUT`/`ID_SEAT`
   из sysfs **без udevd**. Systemd-libudev без демона не помечает устройства → libinput
   их не видит. (Символы клиентов покрыты: libinput/libgudev/libwacom.)
@@ -84,6 +96,13 @@ cd Сборка && make          # оркестратор: программы �
   (`/etc/fonts`, `/usr/share/fontconfig`, DejaVu Sans Mono), и **`/dev/pts`** (devpts;
   `weston-terminal` использует `forkpty`).
 - **запускать через `rootfs/bin/run-weston`** (не голый `weston`).
+- **источник/сборка weston**: git-клон `https://gitlab.freedesktop.org/wayland/weston`,
+  версия **16.0.0-29-g29d5739d** (libweston-17), система сборки **meson** (не make).
+  Собирается вручную, ставится в `/usr/local`; бинарники/библиотеки затягиваются в
+  rootfs через `добавить_программу.sh $(which weston)` + каталоги модулей.
+  Сейчас исходники лежат вне репозитория (`~/Документы/weston`). Оркестратор его
+  **не собирает** (нет Makefile → пропускается). Кандидат на субмодуль в `Программы/`
+  для фиксации версии (см. вопрос ниже в истории — при переносе `build/` не коммитить).
 
 ### Загрузка / init
 - **`/etc/profile` НЕ читается на загрузке** — init запускает `/bin/sh` как
