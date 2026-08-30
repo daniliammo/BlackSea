@@ -22,4 +22,8 @@ chmod 0700 "$XDG_RUNTIME_DIR"
 # Встроенный бэкенд libseat: без демона seatd и без logind (нужен root).
 export LIBSEAT_BACKEND=builtin
 
-exec weston "$@"
+# --renderer=pixman: программный рендер через DRM dumb-буферы, без Mesa/GBM/EGL.
+# Дублирует настройку из /etc/xdg/weston/weston.ini (на случай, если конфиг не
+# подхватится). Для GPU-ускорения убери флаг и доложи модули Mesa (libgallium,
+# libLLVM, dri/*, gbm/dri_gbm.so) в rootfs.
+exec weston --renderer=pixman "$@"
