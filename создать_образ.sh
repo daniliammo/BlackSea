@@ -2,6 +2,21 @@
 
 set -euo pipefail
 
+# ── Очистка при любом выходе (в т.ч. при ошибке) ─────────────────────────────
+# Иначе при падении скрипта loop-устройство и монтирования остаются висеть.
+LOOP_DEV=""
+cleanup() {
+    local rc=$?
+    set +e
+    mountpoint -q mnt/root 2>/dev/null && sudo umount mnt/root
+    mountpoint -q mnt/esp  2>/dev/null && sudo umount mnt/esp
+    [ -n "$LOOP_DEV" ] && sudo losetup -d "$LOOP_DEV" 2>/dev/null
+    rm -rf mnt/ 2>/dev/null
+    [ $rc -ne 0 ] && echo "!! Ошибка ($rc). Выполнена очистка: loop отцеплён, mnt размонтирован." >&2
+    return $rc
+}
+trap cleanup EXIT
+
 # Пути
 BOOT_DIR="$(pwd)/boot"
 ROOTFS_DIR="$(pwd)/rootfs"
@@ -9,6 +24,18 @@ OUTPUT_IMG="ОбразыДляЗагрузки/ОСЧерноеМоре.img"
 KERNEL_FILE="$BOOT_DIR/bzImage"
 
 symlinks -cr $ROOTFS_DIR
+
+# Обновляем кэш динамического загрузчика под текущее содержимое rootfs.
+# КРИТИЧНО: загрузчик glibc 2.43 по умолчанию ищет библиотеки в
+# /lib/x86_64-linux-gnu и /lib, но НЕ в /lib64, где дистрибутив держит все .so.
+# Без ld.so.cache система не найдёт даже libc.so.6 и не загрузится.
+# ld.so.conf перечисляет /lib64 и каталоги weston; ldconfig -r строит кэш.
+if [[ -f "$ROOTFS_DIR/etc/ld.so.conf" ]]; then
+    echo "Обновляю ld.so.cache под содержимое rootfs…"
+    ldconfig -r "$ROOTFS_DIR" -X
+else
+    echo "ВНИМАНИЕ: нет $ROOTFS_DIR/etc/ld.so.conf — кэш загрузчика не будет обновлён!" >&2
+fi
 
 # ФИКСИРОВАННЫЙ UUID для корневого раздела
 # Можно использовать любой UUID, главное чтобы он был постоянным
@@ -32,12 +59,18 @@ ROOTFS_MB=$(( (ROOTFS_SIZE + 1048576) / 1048576 ))
 # EXTRA_MB=$(( ROOTFS_MB / 2 + 50 ))
 # TOTAL_ROOT_MB=$(( ROOTFS_MB + EXTRA_MB ))
 # TOTAL_ROOT_MB=$( ROOTFS_MB )
+# ESP держим >= 48 МБ: FAT32 требует минимум 65525 кластеров, а при 512-байтных
+# кластерах это ~34 МБ. На меньшем разделе mkfs.vfat -F32 делает НЕвалидный FAT32,
+# и UEFI (в т.ч. EFI VirtualBox) отказывается грузиться — «нет загрузочного носителя».
 ESP_MB=48
-TOTAL_MB=$(( ESP_MB + ROOTFS_MB + 8 ))
+# Запас под накладные расходы ext4 (журнал ~4 МБ, таблицы inode, резерв) плюс
+# немного места для работы системы. Иначе rootfs не влезает в раздел.
+ROOT_EXTRA_MB=$(( ROOTFS_MB / 3 + 40 ))
+TOTAL_MB=$(( ESP_MB + ROOTFS_MB + ROOT_EXTRA_MB ))
 
 echo "=== РАСЧЕТ РАЗМЕРОВ ==="
 echo "Rootfs: ${ROOTFS_MB} MiB"
-# echo "Дополнительно: ${EXTRA_MB} MiB"
+echo "ESP: ${ESP_MB} MiB, запас корня: ${ROOT_EXTRA_MB} MiB"
 echo "Размер образа: ${TOTAL_MB} MiB"
 echo "Фиксированный UUID: $ROOT_UUID"
 echo ""
@@ -68,7 +101,7 @@ sleep 0.2
 echo ""
 echo "Форматирую разделы..."
 sudo mkfs.vfat -F 32 -n "EFI" -i "${BOOT_PARTUUID//-/}" "${LOOP_DEV}p1"
-sudo mkfs.ext4 -L "ROOTFS" -U "$ROOT_UUID" -O ^metadata_csum,^64bit "${LOOP_DEV}p2"
+sudo mkfs.ext4 -m 1 -L "ROOTFS" -U "$ROOT_UUID" -O ^metadata_csum,^64bit "${LOOP_DEV}p2"
 
 # Устанавливаем PARTUUID для разделов в GPT таблице
 sudo sgdisk --partition-guid=1:"$BOOT_PARTUUID" "${LOOP_DEV}"
