@@ -107,10 +107,13 @@ cd Сборка && make          # оркестратор: программы �
   `weston-terminal` использует `forkpty`).
 - **запускать через `rootfs/bin/run-weston`** (не голый `weston`).
 - **источник/сборка weston**: субмодуль **`Программы/weston`** (shallow, `shallow = true`),
-  запинен на тег **`16.0.0`**. Система сборки — **meson** (не make), поэтому оркестратор
-  его **не собирает** (нет Makefile → пропускается). Собирается вручную (meson→ninja
-  install в `/usr/local`); бинарники/библиотеки/модули тянутся в rootfs через
-  `добавить_программу.sh $(which weston)`.
+  запинен на тег **`16.0.0`**. Система сборки — **meson**. Оркестратор собирает его
+  спец-шагом (`основа.c` видит имя `weston` → запускает **`Сборка/собрать-weston.sh`**):
+  `meson setup build` → `ninja` → `sudo ninja install` в `/usr/local` → раскладка в
+  rootfs через `добавить_программу.sh` (бинарники+deps+модули) + копирование иконок
+  `/usr/local/share/weston`. Опции meson переопределяются `WESTON_MESON_OPTS`.
+  Требует dev-зависимости weston на хосте (wayland, wayland-protocols, libinput,
+  pixman, libxkbcommon, cairo, pango, Mesa/EGL). Установка в /usr/local — под sudo.
   ВНИМАНИЕ: рабочая сборка пользователя — dev-снапшот **16.0.90 / 29d5739d
   (libweston-17)**, на 29 коммитов новее тега. Точный dev-коммит нельзя запинить
   shallow (freedesktop не отдаёт произвольный SHA / нет тега), поэтому субмодуль на
