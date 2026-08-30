@@ -1,0 +1,25 @@
+#!/bin/sh
+# Запуск weston на минимальной системе: единственный пользователь root,
+# без systemd / logind / dbus.
+#
+# Почему так:
+#   * seatd — это ДЕМОН, он должен быть запущен и создать /run/seatd.sock ДО
+#     weston. Без запущенного демона libseat не находит сокет и падает в logind,
+#     а logind без systemd-сессии даёт «Could not get primary session».
+#   * Для системы, где всё под root, проще всего встроенный (builtin) бэкенд
+#     libseat: weston сам открывает DRM/ввод напрямую, без демона и без logind.
+#
+# Если позже понадобится seatd (например, запуск не от root) — запусти демон
+# перед weston:  seatd -g video &   и убери строку LIBSEAT_BACKEND ниже.
+
+set -eu
+
+# XDG_RUNTIME_DIR обязателен для weston (сокет wayland, временные файлы).
+export XDG_RUNTIME_DIR=/run/user/0
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 0700 "$XDG_RUNTIME_DIR"
+
+# Встроенный бэкенд libseat: без демона seatd и без logind (нужен root).
+export LIBSEAT_BACKEND=builtin
+
+exec weston "$@"
