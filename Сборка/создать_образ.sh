@@ -43,10 +43,20 @@ else
     echo "ВНИМАНИЕ: нет $ROOTFS_DIR/etc/ld.so.conf — кэш загрузчика не будет обновлён!" >&2
 fi
 
-# ФИКСИРОВАННЫЙ UUID для корневого раздела
-# Можно использовать любой UUID, главное чтобы он был постоянным
+# ── Фиксированные идентификаторы разделов ────────────────────────────────────
+# Корневой раздел (ext4): держим одинаковыми UUID файловой системы и GUID
+# раздела в GPT (PARTUUID). По UUID ФС грузится ядро (root=UUID=…). ROOT_UUID —
+# валидный GUID, поэтому годится и как UUID ФС, и как PARTUUID.
 ROOT_UUID="12345678-1234-1234-1234-123456789abc"
-BOOT_PARTUUID="77A7-77A7"
+
+# Загрузочный раздел (FAT32/ESP). ВАЖНО: у FAT НЕТ UUID. Есть только 32-битный
+# «серийный номер тома» (blkid показывает его как UUID вида XXXX-XXXX). Это НЕ
+# то же самое, что GUID раздела в GPT (PARTUUID). Раньше обе величины хранились
+# в одной переменной "77A7-77A7": mkfs.vfat принимал её как серийник, а sgdisk —
+# как GUID, но "77A7-77A7" невалидный GUID, sgdisk молча превращал его в мусор,
+# и проверка PARTUUID всегда ругалась. Теперь это две РАЗНЫЕ величины:
+BOOT_FAT_SERIAL="77A7-77A7"                          # серийник FAT (== UUID тома у blkid)
+BOOT_PARTUUID="77a70000-0000-0000-0000-000000000000" # GUID раздела ESP в GPT
 
 # Проверка
 if [[ ! -d "$BOOT_DIR" || ! -d "$ROOTFS_DIR" || ! -f "$KERNEL_FILE" ]]; then
@@ -116,38 +126,40 @@ fi
 # Форматировать разделы с ФИКСИРОВАННЫМ UUID
 echo ""
 echo "Форматирую разделы..."
-sudo mkfs.vfat -F 32 -n "EFI" -i "${BOOT_PARTUUID//-/}" "${LOOP_DEV}p1"
+sudo mkfs.vfat -F 32 -n "EFI" -i "${BOOT_FAT_SERIAL//-/}" "${LOOP_DEV}p1"
 sudo mkfs.ext4 -m 1 -L "ROOTFS" -U "$ROOT_UUID" -O ^metadata_csum,^64bit "${LOOP_DEV}p2"
 
-# Устанавливаем PARTUUID для разделов в GPT таблице
-sudo sgdisk --partition-guid=1:"$BOOT_PARTUUID" "${LOOP_DEV}"
-sudo sgdisk --partition-guid=2:"$ROOT_UUID" "${LOOP_DEV}"
+# Проставляем GUID разделов в таблице GPT (это PARTUUID, не UUID ФС).
+# stdout sgdisk («The operation has completed successfully.») бесполезен — гасим;
+# ошибки идут в stderr и остаются видны.
+sudo sgdisk --partition-guid=1:"$BOOT_PARTUUID" "${LOOP_DEV}" >/dev/null
+sudo sgdisk --partition-guid=2:"$ROOT_UUID"     "${LOOP_DEV}" >/dev/null
+sudo partprobe "$LOOP_DEV"
 
-PARTUUID=$(sudo blkid -s PARTUUID -o value "${LOOP_DEV}p2")
-echo "PARTUUID: $PARTUUID"
-echo "ROOT_UUID: $ROOT_UUID"
-[ "$PARTUUID" = "$ROOT_UUID" ] && echo "СОВПАДАЕТ!" || echo "НЕ СОВПАДАЕТ!"
+# ── Проверка идентификаторов ─────────────────────────────────────────────────
+# Печатает выровненную строку: [ OK ] если факт совпал с ожидаемым, иначе [FAIL]
+# плюс предупреждение в stderr. Ставит BAD=1 при любом расхождении.
+BAD=0
+check_id() {
+    local label="$1" expected="$2" actual="$3"
+    if [ "$actual" = "$expected" ]; then
+        printf '  [ OK ] %-22s %s\n' "$label" "$actual"
+    else
+        printf '  [FAIL] %-22s %s (ожидалось: %s)\n' "$label" "$actual" "$expected"
+        echo "ВНИМАНИЕ: $label не совпадает — возможны проблемы с загрузкой." >&2
+        BAD=1
+    fi
+}
 
-# Проверить UUID
-ACTUAL_UUID=$(sudo blkid -s UUID -o value "${LOOP_DEV}p2")
-echo "UUID корневого раздела (должен совпадать с фиксированным): $ACTUAL_UUID"
-if [[ "$ACTUAL_UUID" != "$ROOT_UUID" ]]; then
-    echo "ВНИМАНИЕ: UUID не совпадает! Возможны проблемы с загрузкой."
-fi
-
-# Проверить UUID
-ACTUAL_BOOT_UUID=$(sudo blkid -s UUID -o value "${LOOP_DEV}p1")
-echo "UUID boot раздела (должен совпадать с фиксированным): $ACTUAL_BOOT_UUID"
-if [[ "$ACTUAL_BOOT_UUID" != "$BOOT_PARTUUID" ]]; then
-    echo "ВНИМАНИЕ: UUID не совпадает! Возможны проблемы с загрузкой."
-fi
-
-# Проверить PARTUUID
-ACTUAL_BOOT_UUID=$(sudo blkid -s PARTUUID -o value "${LOOP_DEV}p1")
-echo "PARTUUID boot раздела (должен совпадать с фиксированным): $ACTUAL_BOOT_UUID"
-if [[ "$ACTUAL_BOOT_UUID" != "$BOOT_PARTUUID" ]]; then
-    echo "ВНИМАНИЕ: PARTUUID не совпадает! Возможны проблемы с загрузкой."
-fi
+echo ""
+echo "=== ИДЕНТИФИКАТОРЫ РАЗДЕЛОВ ==="
+echo "Корневой раздел ext4 (${LOOP_DEV}p2):"
+check_id "UUID ФС"        "$ROOT_UUID"       "$(sudo blkid -s UUID     -o value "${LOOP_DEV}p2")"
+check_id "PARTUUID (GPT)" "$ROOT_UUID"       "$(sudo blkid -s PARTUUID -o value "${LOOP_DEV}p2")"
+echo "Загрузочный раздел FAT32/ESP (${LOOP_DEV}p1):"
+check_id "серийник FAT"   "$BOOT_FAT_SERIAL" "$(sudo blkid -s UUID     -o value "${LOOP_DEV}p1")"
+check_id "PARTUUID (GPT)" "$BOOT_PARTUUID"   "$(sudo blkid -s PARTUUID -o value "${LOOP_DEV}p1")"
+[ "$BAD" -eq 0 ] && echo "Все идентификаторы совпали." || echo "Есть расхождения (см. выше)."
 
 
 # Создать точку монтирования
