@@ -201,12 +201,12 @@ sudo cp "$KERNEL_FILE" mnt/esp/EFI/BOOT/BOOTX64.EFI
 
 # menuentry "Minimal Linux (UUID)" {
 #     echo "Loading kernel..."
-#     linux /EFI/BOOT/BOOTX64.EFI root=UUID=12345678-1234-1234-1234-123456789abc rootfstype=ext4 rw console=ttyS0,115200 init=/init
+#     linux /EFI/BOOT/BOOTX64.EFI root=UUID=12345678-1234-1234-1234-123456789abc rootfstype=ext4 rw console=ttyS0,115200 init=/sbin/init
 # }
 
 # menuentry "Minimal Linux (by label)" {
 #     echo "Loading kernel..."
-#     linux /EFI/BOOT/BOOTX64.EFI root=LABEL=ROOTFS rootfstype=ext4 rw console=ttyS0,115200 init=/init
+#     linux /EFI/BOOT/BOOTX64.EFI root=LABEL=ROOTFS rootfstype=ext4 rw console=ttyS0,115200 init=/sbin/init
 # }
 # EOF
 
@@ -224,15 +224,15 @@ echo -n "Select option (1): "
 set -v choice
 if %choice% == 2 then
     echo "Booting by label..."
-    EFI\BOOT\BOOTX64.EFI root=LABEL=ROOTFS rootfstype=ext4 rw console=ttyS0,115200 init=/init
+    EFI\BOOT\BOOTX64.EFI root=LABEL=ROOTFS rootfstype=ext4 rw console=ttyS0,115200 init=/sbin/init
 else
     echo "Booting with UUID..."
-    EFI\BOOT\BOOTX64.EFI root=UUID=$ROOT_UUID rootfstype=ext4 rw console=ttyS0,115200 init=/init
+    EFI\BOOT\BOOTX64.EFI root=UUID=$ROOT_UUID rootfstype=ext4 rw console=ttyS0,115200 init=/sbin/init
 endif
 EOF
 
 # Также создать простой cmdline.txt для совместимости
-echo "root=UUID=$ROOT_UUID rootfstype=ext4 rw console=ttyS0,115200 init=/init" | sudo tee mnt/esp/cmdline.txt > /dev/null
+echo "root=UUID=$ROOT_UUID rootfstype=ext4 rw console=ttyS0,115200 init=/sbin/init" | sudo tee mnt/esp/cmdline.txt > /dev/null
 
 sudo umount mnt/esp
 

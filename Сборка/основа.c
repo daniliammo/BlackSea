@@ -331,18 +331,21 @@ static int собрать_модуль(const char *имя) {
         return код;
 
     if (strcmp(имя, "Инициализация") == 0) {
-        // Кладём в /init, а не /sbin/init. Причины:
-        //   * cmdline ядра — init=/init (см. создать_образ.sh), ровно этот путь;
-        //     без /init ядро уходит в fallback на /sbin/init — лишняя магия.
-        //   * /sbin/init busybox делает СИМЛИНКОМ на busybox (applet init). Если
-        //     писать init туда, копирование идёт ПО СИМЛИНКУ и затирает сам
-        //     busybox (все applet'ы ломаются — нет sh/mount). /init же busybox
-        //     не трогает: обычный файл, никаких симлинков.
+        // Кладём в /sbin/init — ДЕФОЛТНЫЙ путь ядра. Встроенный в ядро cmdline
+        // (CONFIG_CMDLINE, см. Сборка/ядро.config) НЕ содержит init=, а UEFI
+        // грузит BOOTX64.EFI напрямую (startup.nsh не выполняется). Значит ядро
+        // ищет init по умолчанию: /sbin/init первым. Поэтому кастомный init
+        // должен лежать именно там — работает без init= в cmdline.
+        //
+        // busybox `make install` делает /sbin/init СИМЛИНКОМ на busybox. Пишем
+        // ПОСЛЕ busybox (scandir+alphasort), а копировать_файл делает remove()
+        // перед записью — снимает симлинк и НЕ затирает сам busybox. Итог:
+        // /sbin/init = обычный файл кастомного init.
         char куда[PATH_MAX];
-        snprintf(куда, sizeof(куда), "%s/rootfs/init", КОРЕНЬ);
+        snprintf(куда, sizeof(куда), "%s/rootfs/sbin/init", КОРЕНЬ);
         if (копировать_файл("Собранное/init", куда) != 0)
             return 1;
-        успех("rootfs/init");
+        успех("rootfs/sbin/init");
         return 0;
     }
 
