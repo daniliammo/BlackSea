@@ -13,8 +13,27 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/Программы/weston"
 BUILD="$SRC/build"          # каталог сборки (в .gitignore weston)
 PREFIX="/usr/local"          # weston зовёт хелперы по абсолютным путям из этого префикса
-# Опции meson можно переопределить: WESTON_MESON_OPTS="-Dfoo=bar ..."
-MESON_OPTS="${WESTON_MESON_OPTS:-}"
+# Лёгкий набор опций по умолчанию: цель — DRM-десктоп (pixman/GL), без удалёнок,
+# X11, Lua-шелла и тест/демо-клиентов. Каждый пункт тянет свои dev-зависимости —
+# отключение делает сборку и надёжнее (не падает без liblua/freerdp/…), и легче.
+# Полностью переопределяется: WESTON_MESON_OPTS="-Dfoo=bar ...".
+DEFAULT_MESON_OPTS="
+  -Dbackend-x11=false
+  -Dxwayland=false
+  -Dshell-lua=false
+  -Dbackend-rdp=false
+  -Dbackend-vnc=false
+  -Dbackend-pipewire=false
+  -Drenderer-vulkan=false
+  -Dshell-ivi=false
+  -Dsystemd=false
+  -Dcolor-management-lcms=false
+  -Dtests=false
+  -Ddemo-clients=false
+  -Dsimple-clients=
+  -Dtools=terminal,debug,info
+"
+MESON_OPTS="${WESTON_MESON_OPTS:-$DEFAULT_MESON_OPTS}"
 
 info() { printf '\033[1;34m»\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
@@ -26,9 +45,12 @@ command -v ninja >/dev/null || { err "нет ninja"; exit 1; }
 
 # 1. Конфигурация meson (идемпотентно) и сборка.
 info "Конфигурирую weston (meson, prefix=$PREFIX)…"
-if [[ -d "$BUILD" ]]; then
+# meson-info появляется только после успешной конфигурации. Если его нет
+# (первый запуск или прошлый setup упал) — конфигурируем заново с чистого листа.
+if [[ -d "$BUILD/meson-info" ]]; then
     meson setup --reconfigure "$BUILD" "$SRC" --prefix="$PREFIX" $MESON_OPTS
 else
+    rm -rf "$BUILD"
     meson setup "$BUILD" "$SRC" --prefix="$PREFIX" $MESON_OPTS
 fi
 
