@@ -101,11 +101,15 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # 3. Создание образа из закоммиченного rootfs + свежесобранного ядра.
+  # 3. Сборка бинарников в rootfs + создание образа.
+  #    Репозиторий версионирует ТОЛЬКО исходники (в rootfs нет ELF/.so), поэтому
+  #    джоб сам собирает busybox, init и weston и раскладывает их в rootfs, как
+  #    это делает локальный оркестратор Сборка/основа.c. Ядро берём готовым из
+  #    джоба kernel (артефакт bzImage) — второй раз не собираем.
   #    БЕЗ VBoxManage: .img создаётся скриптом, дополнительно даём qcow2 (qemu).
   # ---------------------------------------------------------------------------
   image:
-    name: Создание образа (.img + qcow2, без VirtualBox)
+    name: Сборка rootfs + образ (.img + qcow2, без VirtualBox)
     needs: kernel
     runs-on: ubuntu-latest
     steps:
@@ -120,16 +124,75 @@ jobs:
           name: bzImage
           path: boot
 
-      - name: Зависимости создания образа
+      # Инициализируем ТОЛЬКО нужные субмодули (без Ядра — оно уже собрано).
+      # depth 1 достаточно для сборки.
+      - name: Инициализация субмодулей (busybox, Инициализация, weston)
+        run: |
+          git submodule update --init --depth 1 \
+            "Программы/busybox" "Программы/Инициализация" "Программы/weston"
+
+      - name: Зависимости сборки busybox/init/weston + создания образа
         run: |
           sudo apt-get update
-          sudo apt-get install -y parted gdisk dosfstools e2fsprogs \
-            symlinks util-linux libc-bin qemu-utils
+          sudo apt-get install -y \
+            build-essential file binutils \
+            meson ninja-build pkg-config python3 \
+            libwayland-dev wayland-protocols \
+            libinput-dev libxkbcommon-dev libudev-dev libevdev-dev libmtdev-dev \
+            libpixman-1-dev libdrm-dev libgbm-dev libegl-dev libgles2-mesa-dev \
+            mesa-common-dev libgl-dev \
+            libcairo2-dev libpango1.0-dev libfreetype-dev libfontconfig-dev \
+            libpng-dev libjpeg-dev libwebp-dev liblcms2-dev \
+            libseat-dev \
+            parted gdisk dosfstools e2fsprogs symlinks util-linux libc-bin qemu-utils
+
+      # busybox: свой kbuild (как в основа.c). Конфиг — версионированный
+      # Сборка/busybox.config; install раскладывает applet-symlink'и в rootfs.
+      - name: Сборка busybox → rootfs
+        run: |
+          cp "Сборка/busybox.config" "Программы/busybox/.config"
+          make -C "Программы/busybox" olddefconfig
+          make -C "Программы/busybox" -j"$(nproc)"
+          make -C "Программы/busybox" \
+            CONFIG_PREFIX="$GITHUB_WORKSPACE/rootfs" install
+          # busybox динамический → подтянуть его зависимости (libc и пр.) в lib64.
+          ./добавить_программу.sh "$GITHUB_WORKSPACE/rootfs/bin/busybox"
+
+      # Инициализация (наш init): обычный make → Собранное/init → rootfs/sbin/init.
+      - name: Сборка init → rootfs/sbin/init
+        run: |
+          make -C "Программы/Инициализация" -j"$(nproc)"
+          mkdir -p rootfs/sbin
+          cp "Программы/Инициализация/Собранное/init" rootfs/sbin/init
+          chmod 0755 rootfs/sbin/init
+
+      # weston: meson/ninja через тот же скрипт, что и локальный оркестратор.
+      # Он ставит weston в /usr/local и раскладывает бинарники + зависимости
+      # (в т.ч. связку glibc) в rootfs/lib64 через добавить_программу.sh.
+      - name: Сборка weston → rootfs
+        run: Сборка/собрать-weston.sh
+
+      # добавить_программу.sh намеренно НЕ копирует динамический загрузчик
+      # (resolve_deps пропускает ld-linux). В минимальном rootfs его нужно
+      # положить явно — иначе не запускается ни один динамический бинарник.
+      - name: Досеять динамический загрузчик (ld-linux) в rootfs/lib64
+        run: |
+          cp -L /lib64/ld-linux-x86-64.so.2 rootfs/lib64/ld-linux-x86-64.so.2
+          chmod 0755 rootfs/lib64/ld-linux-x86-64.so.2
+
+      - name: Проверка целостности rootfs (loader + libc на месте)
+        run: |
+          set -e
+          for f in rootfs/sbin/init rootfs/bin/busybox rootfs/bin/weston \
+                   rootfs/lib64/ld-linux-x86-64.so.2 rootfs/lib64/libc.so.6; do
+            [ -e "$f" ] || { echo "ОТСУТСТВУЕТ: $f"; exit 1; }
+          done
+          echo "rootfs: базовые бинарники и связка glibc на месте."
 
       - name: Каталог для образов (в git пуст)
         run: mkdir -p ОбразыДляЗагрузки
 
-      - name: Создание образа (.img)
+      - name: Создание образа (.img)  # заодно генерит ld.so.cache (ldconfig)
         run: Сборка/создать_образ.sh
 
       - name: Конвертация в qcow2 (qemu-img, без VirtualBox)
