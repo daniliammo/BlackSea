@@ -164,6 +164,10 @@ jobs:
         run: |
           make -C "Программы/Инициализация" -j"$(nproc)"
           mkdir -p rootfs/sbin
+          # busybox install уже создал sbin/init как СИМЛИНК на busybox — снимаем
+          # его, иначе cp пишет ПО симлинку и затирает сам busybox (sh/mount/все
+          # applet'ы ломаются). После rm получаем обычный файл кастомного init.
+          rm -f rootfs/sbin/init
           cp "Программы/Инициализация/Собранное/init" rootfs/sbin/init
           chmod 0755 rootfs/sbin/init
 
@@ -184,10 +188,15 @@ jobs:
       - name: Проверка целостности rootfs (loader + libc на месте)
         run: |
           set -e
-          for f in rootfs/sbin/init rootfs/bin/busybox rootfs/bin/weston \
+          for f in rootfs/sbin/init rootfs/bin/busybox rootfs/usr/local/bin/weston \
                    rootfs/lib64/ld-linux-x86-64.so.2 rootfs/lib64/libc.so.6; do
             [ -e "$f" ] || { echo "ОТСУТСТВУЕТ: $f"; exit 1; }
           done
+          # Страховка от симлинк-клоббера: busybox не должен оказаться копией init
+          # (если cp прошёл по симлинку sbin/init → затёр bin/busybox).
+          if cmp -s rootfs/bin/busybox rootfs/sbin/init; then
+            echo "ОШИБКА: rootfs/bin/busybox совпадает с init — busybox затёрт"; exit 1
+          fi
           echo "rootfs: базовые бинарники и связка glibc на месте."
 
       - name: Каталог для образов (в git пуст)
