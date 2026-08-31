@@ -94,6 +94,15 @@ cd Сборка && make          # оркестратор: программы �
   - **Fallback/дебаг (VM): pixman** (`/etc/xdg/weston/weston.ini` →
     `[core] renderer=pixman` + флаг в `run-weston`). Без Mesa, программный рендер.
     Использовать только для отладки; для реальной работы вернуть GL-рендер.
+  - **Рендереры/модули — как в ядре Linux (dlopen).** weston грузит бэкенды и
+    рендереры через `weston_load_module()` только по требованию: `gl-renderer.so`,
+    `vulkan-renderer.so`, `color-lcms.so`, `xwayland.so`, `drm-backend.so` —
+    отдельные `.so` в `libweston-17/`. В память грузится **только выбранный**
+    рендерер (pixman вкомпилен в libweston как крохотный fallback; gl-renderer.so
+    подгружается только при GL). Поэтому их держим модулями, не статикой.
+- **управление цветом**: `color-management-lcms=true` → модуль `color-lcms.so`
+  (грузится по требованию), зависит от `liblcms2.so.2` (в rootfs есть). Для
+  откалиброванных цветов; ICC-профиль задаётся в weston.ini на выход.
 - **GPU в VirtualBox (дебаг)**: графика **VBoxVGA** → драйвер `vboxvideo`
   (dumb-буферы для pixman). **НЕ VMSVGA** (`vmwgfx` + pixman ненадёжно). Это путь
   для VM-отладки; на реальном железе — родной GPU-драйвер + Mesa (см. выше).

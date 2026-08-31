@@ -19,20 +19,25 @@ PREFIX="/usr/local"          # weston зовёт хелперы по абсол�
 # Полностью переопределяется: WESTON_MESON_OPTS="-Dfoo=bar ...".
 DEFAULT_MESON_OPTS="
   -Dbackend-x11=false
+  -Dbackend-headless=false
   -Dxwayland=false
   -Dshell-lua=false
+  -Dshell-kiosk=false
+  -Dshell-ivi=false
   -Dbackend-rdp=false
   -Dbackend-vnc=false
   -Dbackend-pipewire=false
   -Drenderer-vulkan=false
-  -Dshell-ivi=false
   -Dsystemd=false
-  -Dcolor-management-lcms=false
+  -Dcolor-management-lcms=true
   -Dtests=false
   -Ddemo-clients=false
   -Dsimple-clients=
   -Dtools=terminal,debug,info
 "
+# Примечание: рендереры и color-lcms — dlopen-модули (gl-renderer.so,
+# color-lcms.so). В память грузится только выбранный рендерер; color-lcms.so —
+# лишь когда включено управление цветом. Поэтому их держим модулями, не статикой.
 MESON_OPTS="${WESTON_MESON_OPTS:-$DEFAULT_MESON_OPTS}"
 
 info() { printf '\033[1;34m»\033[0m %s\n' "$*"; }
