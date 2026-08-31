@@ -300,9 +300,10 @@ static int собрать_модуль(const char *имя) {
         if (копировать_файл(конфиг, ".config") != 0)
             return 1;
         // .config не должен быть исполняемым — копировать_файл ставит 0755, чинить не нужно
-        // (kbuild это не смущает). olddefconfig подтягивает конфиг под текущую версию.
-        if (код_возврата(system("make olddefconfig")) != 0) {
-            ошибка("busybox: make olddefconfig не прошёл");
+        // (kbuild это не смущает). У busybox цель — oldconfig (НЕ olddefconfig, это
+        // ядерная цель); прогоняем неинтерактивно (yes "" → дефолты для новых символов).
+        if (код_возврата(system("yes '' | make oldconfig")) != 0) {
+            ошибка("busybox: make oldconfig не прошёл");
             return 1;
         }
         int код = запустить_make(имя, NULL);  // собрать бинарник busybox

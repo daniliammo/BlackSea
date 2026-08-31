@@ -151,7 +151,8 @@ jobs:
       - name: Сборка busybox → rootfs
         run: |
           cp "Сборка/busybox.config" "Программы/busybox/.config"
-          make -C "Программы/busybox" olddefconfig
+          # busybox: цель oldconfig (НЕ olddefconfig — та ядерная); неинтерактивно.
+          yes '' | make -C "Программы/busybox" oldconfig
           make -C "Программы/busybox" -j"$(nproc)"
           make -C "Программы/busybox" \
             CONFIG_PREFIX="$GITHUB_WORKSPACE/rootfs" install
