@@ -29,6 +29,8 @@
 *.a
 *.la
 *.lo
+*.so
+*.so.*
 
 # Executables
 *.exe
@@ -55,3 +57,22 @@ dkms.conf
 
 # debug information files
 *.dwo
+
+# ── Артефакты сборки в rootfs/boot ────────────────────────────────────────────
+# Принцип: в гите только ИСХОДНИКИ (конфиги, скрипты). Ни ELF-бинарников,
+# ни .so, ни busybox-symlink'ов. Всё это порождается сборкой (оркестратор
+# «Сборка» + скрипты образа) и заново раскладывается в rootfs локально.
+#
+# Каталоги ниже целиком считаем артефактными и игнорируем их содержимое;
+# редкие исходные файлы, живущие там же, возвращаем через ! -исключения.
+/boot/bzImage
+/rootfs/etc/ld.so.cache      # генерит ldconfig в создать_образ.sh
+/rootfs/sbin/*               # init (из субмодуля Инициализация) + applet-symlink'и
+/rootfs/bin/*                # busybox-applet'ы, weston и прочие ELF
+/rootfs/lib/*                # только .so
+/rootfs/lib64/*             # .so + ld-linux
+/rootfs/usr/local/bin/*
+/rootfs/usr/local/libexec/*
+# Исходные скрипты, лежащие среди артефактов, — сохраняем:
+!/rootfs/bin/run-weston
+!/rootfs/bin/ldd
