@@ -172,6 +172,11 @@ static int копировать_файл(const char *откуда, const char *�
         return 1;
     }
 
+    // Снять назначение перед записью. Если куда — СИМЛИНК (напр. busybox делает
+    // sbin/init → busybox), fopen("wb") пишет ПО симлинку и затирает цель.
+    // remove() удаляет сам симлинк/файл, дальше создаём свежий обычный файл.
+    remove(куда);
+
     FILE *dest = fopen(куда, "wb");
     if (!dest) {
         ошибка("не открыть файл назначения %s: %s", куда, strerror(errno));
@@ -326,11 +331,18 @@ static int собрать_модуль(const char *имя) {
         return код;
 
     if (strcmp(имя, "Инициализация") == 0) {
+        // Кладём в /init, а не /sbin/init. Причины:
+        //   * cmdline ядра — init=/init (см. создать_образ.sh), ровно этот путь;
+        //     без /init ядро уходит в fallback на /sbin/init — лишняя магия.
+        //   * /sbin/init busybox делает СИМЛИНКОМ на busybox (applet init). Если
+        //     писать init туда, копирование идёт ПО СИМЛИНКУ и затирает сам
+        //     busybox (все applet'ы ломаются — нет sh/mount). /init же busybox
+        //     не трогает: обычный файл, никаких симлинков.
         char куда[PATH_MAX];
-        snprintf(куда, sizeof(куда), "%s/rootfs/sbin/init", КОРЕНЬ);
+        snprintf(куда, sizeof(куда), "%s/rootfs/init", КОРЕНЬ);
         if (копировать_файл("Собранное/init", куда) != 0)
             return 1;
-        успех("rootfs/sbin/init");
+        успех("rootfs/init");
         return 0;
     }
 
@@ -343,14 +355,23 @@ static int построить_программы(void) {
     char каталог_программ[PATH_MAX];
     snprintf(каталог_программ, sizeof(каталог_программ), "%s/Программы", КОРЕНЬ);
 
-    DIR *программы = opendir(каталог_программ);
-    if (программы == NULL) {
+    // scandir + alphasort: детерминированный ОТСОРТИРОВАННЫЙ порядок сборки.
+    // Это критично: busybox `make install` (CONFIG_INSTALL_APPLET_SYMLINKS=y)
+    // создаёт symlink `sbin/init -> busybox`, а шаг «Инициализация» перезаписывает
+    // его кастомным init (тот, что делает `mount -a`). Значит «Инициализация»
+    // ДОЛЖНА идти ПОСЛЕ busybox, иначе busybox затрёт кастомный init и система
+    // грузится в busybox-init без rcS — не монтируется /proc, всё ломается.
+    // Байтово "busybox" (0x62) < "Инициализация" (0xD0…), поэтому сортировка
+    // гарантирует нужный порядок. НЕ возвращать readdir (порядок ФС произволен).
+    struct dirent **записи = NULL;
+    int число = scandir(каталог_программ, &записи, NULL, alphasort);
+    if (число < 0) {
         ошибка("не открыть каталог %s: %s", каталог_программ, strerror(errno));
         return 1;
     }
 
-    struct dirent *запись;
-    while ((запись = readdir(программы)) != NULL) {
+    for (int idx = 0; idx < число; idx++) {
+        struct dirent *запись = записи[idx];
         if (прервано)
             break;
 
@@ -416,7 +437,9 @@ static int построить_программы(void) {
         собрано_счёт++;
     }
 
-    closedir(программы);
+    for (int idx = 0; idx < число; idx++)
+        free(записи[idx]);
+    free(записи);
 
     if (прервано)
         return 130;               // 128 + SIGINT: сборка прервана

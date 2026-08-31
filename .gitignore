@@ -58,21 +58,36 @@ dkms.conf
 # debug information files
 *.dwo
 
-# ── Артефакты сборки в rootfs/boot ────────────────────────────────────────────
-# Принцип: в гите только ИСХОДНИКИ (конфиги, скрипты). Ни ELF-бинарников,
-# ни .so, ни busybox-symlink'ов. Всё это порождается сборкой (оркестратор
+# ── Артефакты сборки в rootfs ─────────────────────────────────────────────────
+# Принцип: в гите только ИСХОДНИКИ (конфиги, скрипты, данные). Ни ELF-бинарников,
+# ни .so, ни busybox-symlink'ов, ни кэшей. Всё это порождается сборкой (оркестратор
 # «Сборка» + скрипты образа) и заново раскладывается в rootfs локально.
 #
-# Каталоги ниже целиком считаем артефактными и игнорируем их содержимое;
-# редкие исходные файлы, живущие там же, возвращаем через ! -исключения.
+# ВАЖНО: git НЕ понимает inline-комментарии — «#» работает только в НАЧАЛЕ строки.
+# Комментарий в конце паттерна («/rootfs/bin/*  # …») делает его частью паттерна,
+# и правило перестаёт срабатывать. Поэтому все пояснения — на отдельных строках.
+#
+# собранное ядро
 /boot/bzImage
-/rootfs/etc/ld.so.cache      # генерит ldconfig в создать_образ.sh
-/rootfs/sbin/*               # init (из субмодуля Инициализация) + applet-symlink'и
-/rootfs/bin/*                # busybox-applet'ы, weston и прочие ELF
-/rootfs/lib/*                # только .so
-/rootfs/lib64/*             # .so + ld-linux
+# генерит ldconfig в создать_образ.sh
+/rootfs/etc/ld.so.cache
+# кастомный init (субмодуль Инициализация), kernel cmdline init=/init
+/rootfs/init
+# init-applet busybox + applet-symlink'и (sh, mount, …)
+/rootfs/sbin/*
+# busybox-applet'ы, weston и прочие ELF
+/rootfs/bin/*
+# только .so
+/rootfs/lib/*
+# .so + ld-linux
+/rootfs/lib64/*
+# weston-бинарники, хелперы и модули (.so уже покрыты глобально)
 /rootfs/usr/local/bin/*
+/rootfs/usr/local/sbin/*
 /rootfs/usr/local/libexec/*
+/rootfs/usr/local/lib/*
+# рантайм-кэши (fontconfig и пр.), генерятся на лету
+/rootfs/var/
 # Исходные скрипты, лежащие среди артефактов, — сохраняем:
 !/rootfs/bin/run-weston
 !/rootfs/bin/ldd

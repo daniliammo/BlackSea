@@ -33,4 +33,4 @@ export LIBSEAT_BACKEND=builtin
 # Дублирует настройку из /etc/xdg/weston/weston.ini (на случай, если конфиг не
 # подхватится). Для GPU-ускорения убери флаг и доложи модули Mesa (libgallium,
 # libLLVM, dri/*, gbm/dri_gbm.so) в rootfs.
-exec weston --renderer=pixman "$@"
+exec /usr/local/bin/weston --renderer=pixman "$@"
