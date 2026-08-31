@@ -62,12 +62,27 @@ fi
 info "Собираю weston (ninja)…"
 ninja -C "$BUILD"
 
-# 2. Установка в /usr/local (хелперы/модули weston зовутся по абсолютным путям
+# 2. Чистим ПРЕДЫДУЩИЕ установки weston (любых версий) из префикса и rootfs.
+#    Иначе при смене версии остаются старые libweston-N.so.* и каталоги модулей
+#    libweston-N/, а добавить_программу.sh подхватывает их по globу libweston-*/
+#    и ругается на отсутствующие зависимости снятых версий (напр. libweston-16.so.0).
+LIBDIR="$PREFIX/lib/x86_64-linux-gnu"   # мультиарх-путь установки weston на этом хосте
+info "Убираю прошлые установки weston из $PREFIX и rootfs…"
+# shellcheck disable=SC2086  # намеренный glob-разворот путей weston
+sudo rm -rf "$LIBDIR"/libweston-* "$LIBDIR"/weston \
+            "$PREFIX"/bin/weston "$PREFIX"/bin/weston-* \
+            "$PREFIX"/libexec/weston-*
+rm -rf "$ROOT/rootfs$LIBDIR"/libweston-* "$ROOT/rootfs$LIBDIR"/weston \
+       "$ROOT"/rootfs/lib64/libweston-*.so* \
+       "$ROOT"/rootfs/bin/weston "$ROOT"/rootfs/bin/weston-* \
+       "$ROOT"/rootfs/usr/local/libexec/weston-*
+
+# 3. Установка в /usr/local (хелперы/модули weston зовутся по абсолютным путям
 #    этого префикса, а RUNPATH указывает сюда — поэтому ставим в реальный /usr/local).
 info "Устанавливаю weston в $PREFIX (нужен sudo)…"
 sudo ninja -C "$BUILD" install
 
-# 3. Раскладка в rootfs. добавить_программу.sh: бинарники из /usr/local/* кладёт
+# 4. Раскладка в rootfs. добавить_программу.sh: бинарники из /usr/local/* кладёт
 #    по тем же абсолютным путям, тянет зависимости в lib64 и авто-подхватывает
 #    каталоги модулей weston (libweston-*/, weston/) по RUNPATH.
 info "Раскладываю weston в rootfs…"
@@ -77,7 +92,7 @@ info "Раскладываю weston в rootfs…"
     "$PREFIX/libexec/weston-desktop-shell" \
     "$PREFIX/libexec/weston-keyboard"
 
-# 4. Иконки/данные weston (их добавить_программу.sh не копирует).
+# 5. Иконки/данные weston (их добавить_программу.sh не копирует).
 info "Копирую данные weston (иконки)…"
 mkdir -p "$ROOT/rootfs$PREFIX/share/weston"
 cp -a "$PREFIX/share/weston/." "$ROOT/rootfs$PREFIX/share/weston/"
