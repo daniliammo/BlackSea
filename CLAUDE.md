@@ -217,17 +217,20 @@ cd Сборка && make          # оркестратор: программы �
   апстрим уже делает строкой ниже для `pkgdatadir` wayland-protocols.
 
 ### Загрузка / init
-- **cmdline ядра — из ВСТРОЕННОГО `CONFIG_CMDLINE`** (голый EFI-stub грузится
+- **cmdline ядра — из встроенного `CONFIG_CMDLINE`** (голый EFI-stub грузится
   прошивкой напрямую, LoadOptions нет; startup.nsh в EFI Shell — запасной путь).
-  Значит `init=/sbin/init`, `root=PARTUUID=…` и пр. живут в `Сборка/ядро.config`
-  → **при смене cmdline ОБЯЗАТЕЛЬНО пересобрать ядро** (иначе bzImage устаревает).
-- **Симптом устаревшего ядра**: нет `init=` в cmdline → ядро игнорирует наш init
-  и перебирает `/sbin/init → /etc/init → /bin/init → /bin/sh`; при провале execve
-  (например, в rootfs нет загрузчика/`sbin/init`) — виснет/паникует. `создать_образ.sh`
-  теперь СТРАХУЕТ: `grep -a 'init=/sbin/init'` в bzImage + наличие `sbin/init`,
-  `lib64/ld-linux-x86-64.so.2`, `lib64/libc.so.6` в rootfs; иначе — стоп с
-  инструкцией пересборки ядра. Пересбор: `cp Сборка/ядро.config
-  Программы/Ядро/.config && make -C Программы/Ядро olddefconfig bzImage`.
+  **`init=` в cmdline НАМЕРЕННО НЕТ** (см. `основа.c`): ядро при пустом `init=`
+  первым пробует **`/sbin/init`** — туда и кладём кастомный init. Это by design,
+  НЕ баг. (ВНИМАНИЕ: `основа.c` НЕ копирует `Сборка/ядро.config`→`.config` при
+  сборке ядра — в отличие от busybox; ядро собирается с тем `.config`, что уже
+  лежит в дереве. `Сборка/ядро.config` — только версионированная копия-эталон.)
+- **Симптом «ядро перебирает `/sbin/init → /etc/init → /bin/init` и виснет»**:
+  execve `/sbin/init` провалился. Реальные причины: (1) `/sbin/init` оказался
+  СИМЛИНКОМ на busybox (регрессия busybox `make install` — наш init затёрт);
+  (2) нет интерпретатора — `lib64/ld-linux-x86-64.so.2` / `lib64/libc.so.6`.
+  `создать_образ.sh` СТРАХУЕТ: `/sbin/init` должен быть настоящим ELF (не симлинк)
+  + загрузчик и libc на месте; иначе стоп. **Инспекция готового образа без рута**:
+  `dd` вырезать ext4-раздел (offset из `fdisk -l img`) → `debugfs -R "stat/dump …"`.
 - **`/etc/profile` НЕ читается на загрузке** — init запускает `/bin/sh` как
   НЕ-login shell (признак: простой `#`, а не цветной PS1). Поэтому весь
   рантайм-сетап (PATH, `XDG_RUNTIME_DIR`, `LIBSEAT_BACKEND`, монтирование `/dev/pts`)

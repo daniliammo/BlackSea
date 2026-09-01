@@ -65,30 +65,27 @@ if [[ ! -d "$BOOT_DIR" || ! -d "$ROOTFS_DIR" || ! -f "$KERNEL_FILE" ]]; then
     exit 1
 fi
 
-# ── Защита от УСТАРЕВШЕГО ядра ────────────────────────────────────────────────
-# bzImage грузится как голый EFI-stub, поэтому cmdline берётся из ВСТРОЕННОГО
-# CONFIG_CMDLINE (при прямом запуске прошивкой LoadOptions нет). Если ядро собрано
-# со старым конфигом БЕЗ init=/sbin/init — ядро игнорирует наш init и уходит в
-# перебор /sbin/init → /etc/init → /bin/init (виснет). cmdline лежит в bzImage
-# открытым текстом, поэтому ловим это здесь и НЕ собираем заведомо битый образ.
-if ! grep -aq 'init=/sbin/init' "$KERNEL_FILE"; then
-    echo "Ошибка: в $KERNEL_FILE нет 'init=/sbin/init' во встроенном cmdline —" >&2
-    echo "        ядро собрано СТАРЫМ конфигом (не совпадает с Сборка/ядро.config)." >&2
-    echo "        Пересоберите ядро под актуальный конфиг:" >&2
-    echo "          cp Сборка/ядро.config Программы/Ядро/.config" >&2
-    echo "          make -C Программы/Ядро olddefconfig" >&2
-    echo "          make -C Программы/Ядро -j\"\$(nproc)\" bzImage" >&2
-    echo "          cp Программы/Ядро/arch/x86/boot/bzImage boot/bzImage" >&2
-    echo "        (или полный прогон: cd Сборка && make)" >&2
+# ── Проверка загрузопригодности rootfs ───────────────────────────────────────
+# Ядро грузится голым EFI-stub'ом, cmdline БЕЗ init= (так задумано, см.
+# Сборка/основа.c) — значит ядро первым пробует /sbin/init. Он ОБЯЗАН быть:
+#   1) настоящим ELF, а НЕ симлинком на busybox (частая регрессия: busybox
+#      `make install` делает /sbin/init симлинком → наш init затирается);
+#   2) с живым интерпретатором — динамический загрузчик и libc должны лежать в
+#      /lib64. Иначе execve /sbin/init падает (ENOENT на интерпретатор) и ядро
+#      уходит в перебор /sbin/init → /etc/init → /bin/init и виснет.
+INIT_BIN="$ROOTFS_DIR/sbin/init"
+if [[ -L "$INIT_BIN" ]]; then
+    echo "Ошибка: rootfs/sbin/init — СИМЛИНК (скорее всего на busybox), нужен наш init." >&2
+    echo "        Пересоберите целиком: cd Сборка && make (init кладётся ПОСЛЕ busybox)." >&2
     exit 1
 fi
-
-# Загрузчик, libc и наш init обязаны быть в rootfs: без них ни один динамический
-# бинарник (в т.ч. /sbin/init и busybox) не выполнится — ядро зависнет на переборе
-# init'ов (execve возвращает ENOENT из-за отсутствующего интерпретатора).
-for f in sbin/init lib64/ld-linux-x86-64.so.2 lib64/libc.so.6; do
+if [[ ! -f "$INIT_BIN" ]] || ! file -b "$INIT_BIN" | grep -q ELF; then
+    echo "Ошибка: rootfs/sbin/init отсутствует или не ELF — систему нечем инициализировать." >&2
+    exit 1
+fi
+for f in lib64/ld-linux-x86-64.so.2 lib64/libc.so.6; do
     [[ -e "$ROOTFS_DIR/$f" ]] || {
-        echo "Ошибка: в rootfs нет '$f' — система не загрузится (нечем выполнить init)." >&2
+        echo "Ошибка: в rootfs нет '$f' — динамический init/busybox не запустится, ядро зависнет." >&2
         exit 1
     }
 done
