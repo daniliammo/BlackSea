@@ -65,6 +65,34 @@ if [[ ! -d "$BOOT_DIR" || ! -d "$ROOTFS_DIR" || ! -f "$KERNEL_FILE" ]]; then
     exit 1
 fi
 
+# ── Защита от УСТАРЕВШЕГО ядра ────────────────────────────────────────────────
+# bzImage грузится как голый EFI-stub, поэтому cmdline берётся из ВСТРОЕННОГО
+# CONFIG_CMDLINE (при прямом запуске прошивкой LoadOptions нет). Если ядро собрано
+# со старым конфигом БЕЗ init=/sbin/init — ядро игнорирует наш init и уходит в
+# перебор /sbin/init → /etc/init → /bin/init (виснет). cmdline лежит в bzImage
+# открытым текстом, поэтому ловим это здесь и НЕ собираем заведомо битый образ.
+if ! grep -aq 'init=/sbin/init' "$KERNEL_FILE"; then
+    echo "Ошибка: в $KERNEL_FILE нет 'init=/sbin/init' во встроенном cmdline —" >&2
+    echo "        ядро собрано СТАРЫМ конфигом (не совпадает с Сборка/ядро.config)." >&2
+    echo "        Пересоберите ядро под актуальный конфиг:" >&2
+    echo "          cp Сборка/ядро.config Программы/Ядро/.config" >&2
+    echo "          make -C Программы/Ядро olddefconfig" >&2
+    echo "          make -C Программы/Ядро -j\"\$(nproc)\" bzImage" >&2
+    echo "          cp Программы/Ядро/arch/x86/boot/bzImage boot/bzImage" >&2
+    echo "        (или полный прогон: cd Сборка && make)" >&2
+    exit 1
+fi
+
+# Загрузчик, libc и наш init обязаны быть в rootfs: без них ни один динамический
+# бинарник (в т.ч. /sbin/init и busybox) не выполнится — ядро зависнет на переборе
+# init'ов (execve возвращает ENOENT из-за отсутствующего интерпретатора).
+for f in sbin/init lib64/ld-linux-x86-64.so.2 lib64/libc.so.6; do
+    [[ -e "$ROOTFS_DIR/$f" ]] || {
+        echo "Ошибка: в rootfs нет '$f' — система не загрузится (нечем выполнить init)." >&2
+        exit 1
+    }
+done
+
 # Показать структуру rootfs
 echo "=== СТРУКТУРА ROOTFS ==="
 ls -la "$ROOTFS_DIR"
