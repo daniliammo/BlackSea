@@ -12,7 +12,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/Программы/weston"
 BUILD="$SRC/build"          # каталог сборки (в .gitignore weston)
-PREFIX="/usr/local"          # weston зовёт хелперы по абсолютным путям из этого префикса
+PREFIX="/usr/local"          # ЛОГИЧЕСКИЙ префикс: RUNPATH и абсолютные пути хелперов
+                             # weston зашиты сюда (в rootfs целевой ОС /usr/local есть).
+                             # В РЕАЛЬНЫЙ /usr/local хоста НИЧЕГО не ставим — установка
+                             # идёт в staging ($STAGE) через DESTDIR, без sudo и без
+                             # засорения системных каталогов.
+STAGE="$BUILD/stage"         # staging-каталог установки (пользовательский; = $DESTDIR)
 # Лёгкий набор опций по умолчанию: цель — DRM-десктоп (pixman/GL), без удалёнок,
 # X11, Lua-шелла и тест/демо-клиентов. Каждый пункт тянет свои dev-зависимости —
 # отключение делает сборку и надёжнее (не падает без liblua/freerdp/…), и легче.
@@ -40,18 +45,9 @@ DEFAULT_MESON_OPTS="
 # лишь когда включено управление цветом. Поэтому их держим модулями, не статикой.
 MESON_OPTS="${WESTON_MESON_OPTS:-$DEFAULT_MESON_OPTS}"
 
-# sudo нужен ТОЛЬКО для записи в /usr/local (install и чистка прошлой установки).
-# Если каталог уже писабельный для пользователя — работаем БЕЗ рута. Сделать его
-# своим разово:  sudo chown -R "$USER" /usr/local   (после этого рут не нужен).
-# Переопределяется: SUDO="" (форсить без рута) или SUDO="sudo" (принудительно).
-writable_prefix() {          # писабелен ли $PREFIX (по ближайшему существующему предку)
-    local d="$1"
-    while [[ ! -e "$d" && "$d" != "/" ]]; do d="$(dirname "$d")"; done
-    [[ -w "$d" ]]
-}
-if [[ -z "${SUDO+x}" ]]; then
-    if writable_prefix "$PREFIX"; then SUDO=""; else SUDO="sudo"; fi
-fi
+# sudo НЕ нужен: устанавливаем в staging-каталог ($STAGE), а не в системный /usr/local.
+# Раскладку в rootfs делает добавить_программу.sh (тоже без рута). Образ (создать_образ.sh)
+# по-прежнему требует рут — loop/mount/parted — но это отдельный шаг.
 
 info() { printf '\033[1;34m»\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
@@ -169,39 +165,43 @@ fi
 info "Собираю weston (ninja)…"
 ninja -C "$BUILD"
 
-# 2. Чистим ПРЕДЫДУЩИЕ установки weston (любых версий) из префикса и rootfs.
-#    Иначе при смене версии остаются старые libweston-N.so.* и каталоги модулей
-#    libweston-N/, а добавить_программу.sh подхватывает их по globу libweston-*/
-#    и ругается на отсутствующие зависимости снятых версий (напр. libweston-16.so.0).
-LIBDIR="$PREFIX/lib/x86_64-linux-gnu"   # мультиарх-путь установки weston на этом хосте
-info "Убираю прошлые установки weston из $PREFIX и rootfs…"
+# 2. Чистим ПРЕДЫДУЩИЕ установки weston (любых версий) из rootfs. Иначе при смене
+#    версии остаются старые libweston-N.so.* и каталоги модулей libweston-N/, а
+#    добавить_программу.sh подхватывает их по globу libweston-*/ и ругается на
+#    отсутствующие зависимости снятых версий (напр. libweston-16.so.0). Реальный
+#    /usr/local НЕ трогаем (мы туда не ставим); staging пересоздаётся целиком ниже.
+LIBDIR="$PREFIX/lib/x86_64-linux-gnu"   # мультиарх-подпуть (логический, внутри префикса)
+info "Убираю прошлые установки weston из rootfs…"
 # shellcheck disable=SC2086  # намеренный glob-разворот путей weston
-$SUDO rm -rf "$LIBDIR"/libweston-* "$LIBDIR"/weston \
-            "$PREFIX"/bin/weston "$PREFIX"/bin/weston-* \
-            "$PREFIX"/libexec/weston-*
 rm -rf "$ROOT/rootfs$LIBDIR"/libweston-* "$ROOT/rootfs$LIBDIR"/weston \
        "$ROOT"/rootfs/lib64/libweston-*.so* \
        "$ROOT"/rootfs/bin/weston "$ROOT"/rootfs/bin/weston-* \
        "$ROOT"/rootfs/usr/local/libexec/weston-*
 
-# 3. Установка в /usr/local (хелперы/модули weston зовутся по абсолютным путям
-#    этого префикса, а RUNPATH указывает сюда — поэтому ставим в реальный /usr/local).
-info "Устанавливаю weston в $PREFIX${SUDO:+ (нужен sudo)}…"
-$SUDO ninja -C "$BUILD" install
+# 3. Установка в STAGING ($STAGE), НЕ в системный /usr/local. meson сконфигурирован
+#    с --prefix=/usr/local, поэтому RUNPATH и абсолютные пути хелперов в бинарниках
+#    зашиты как /usr/local/... (это верно для целевой ОС, где /usr/local есть в
+#    rootfs). DESTDIR лишь СМЕЩАЕТ место записи на хосте → всё ложится в
+#    $STAGE/usr/local/... . Без sudo, без засорения системы.
+info "Устанавливаю weston в staging ($STAGE)…"
+rm -rf "$STAGE"
+DESTDIR="$STAGE" ninja -C "$BUILD" install
+STAGED="$STAGE$PREFIX"                  # = $STAGE/usr/local
 
-# 4. Раскладка в rootfs. добавить_программу.sh: бинарники из /usr/local/* кладёт
-#    по тем же абсолютным путям, тянет зависимости в lib64 и авто-подхватывает
+# 4. Раскладка в rootfs. добавить_программу.sh с DESTDIR=$STAGE: срезает staging-
+#    префикс, кладёт бинарники по ЛОГИЧЕСКИМ путям /usr/local/*, тянет зависимости
+#    в lib64 (ldd находит staged-либы через LD_LIBRARY_PATH) и авто-подхватывает
 #    каталоги модулей weston (libweston-*/, weston/) по RUNPATH.
 info "Раскладываю weston в rootfs…"
-"$ROOT/добавить_программу.sh" \
-    "$PREFIX/bin/weston" \
-    "$PREFIX/bin/weston-terminal" \
-    "$PREFIX/libexec/weston-desktop-shell" \
-    "$PREFIX/libexec/weston-keyboard"
+DESTDIR="$STAGE" "$ROOT/добавить_программу.sh" \
+    "$STAGED/bin/weston" \
+    "$STAGED/bin/weston-terminal" \
+    "$STAGED/libexec/weston-desktop-shell" \
+    "$STAGED/libexec/weston-keyboard"
 
-# 5. Иконки/данные weston (их добавить_программу.sh не копирует).
+# 5. Иконки/данные weston (их добавить_программу.sh не копирует) — из staging.
 info "Копирую данные weston (иконки)…"
 mkdir -p "$ROOT/rootfs$PREFIX/share/weston"
-cp -a "$PREFIX/share/weston/." "$ROOT/rootfs$PREFIX/share/weston/"
+cp -a "$STAGED/share/weston/." "$ROOT/rootfs$PREFIX/share/weston/"
 
-info "weston собран и разложен в rootfs."
+info "weston собран (staging, без sudo) и разложен в rootfs."

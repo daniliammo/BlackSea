@@ -173,6 +173,11 @@ cd Сборка && make          # оркестратор: программы �
 - Аргумент-каталог (dlopen-модули) зеркалируется по абсолютному пути + deps.
 - `auto_weston_modules`: подхватывает `libweston-*/` и `weston/` по RUNPATH.
 - `ensure_glibc`: обновляет glibc в rootfs, если требуется более новая версия символов.
+- **`DESTDIR=<staging>`** (опц.): программа установлена не в реальный `/usr/local`, а в
+  staging (`$DESTDIR/usr/local/…`). Скрипт **срезает** `$DESTDIR` → кладёт по логическим
+  путям `/usr/local/*` в rootfs (как в RUNPATH), а `ldd` ищет staged-либы через
+  `LD_LIBRARY_PATH` на staging. Так `собрать-weston.sh` ставит weston без sudo/системы.
+  Пусто → прежнее поведение (источник = реальный `/usr/local`).
 
 ### Weston (рабочая конфигурация)
 - **seat**: `LIBSEAT_BACKEND=builtin` — встроенный бэкенд libseat, **без демона seatd
@@ -211,15 +216,24 @@ cd Сборка && make          # оркестратор: программы �
 - **источник/сборка weston**: субмодуль **`Программы/weston`** (shallow, `shallow = true`),
   запинен на тег **`16.0.0`**. Система сборки — **meson**. Оркестратор собирает его
   спец-шагом (`основа.c` видит имя `weston` → запускает **`Сборка/собрать-weston.sh`**):
-  `meson setup build` → `ninja` → `sudo ninja install` в `/usr/local` → раскладка в
+  `meson setup build` → `ninja` → `DESTDIR=<staging> ninja install` → раскладка в
   rootfs через `добавить_программу.sh` (бинарники+deps+модули) + копирование иконок
   `/usr/local/share/weston`. Опции meson переопределяются `WESTON_MESON_OPTS`.
   Требует dev-зависимости weston на хосте (wayland, wayland-protocols, libinput,
-  pixman, libxkbcommon, cairo, pango, Mesa/EGL). Установка в /usr/local — под sudo
-  ТОЛЬКО если каталог не писабелен: скрипт сам определяет (`writable_prefix`) и
-  использует sudo лишь при надобности. Чтобы собирать БЕЗ рута — разово
-  `sudo chown -R "$USER" /usr/local` (или `SUDO=""` форсом). Образ
-  (`создать_образ.sh`) всё равно требует рут — loop/mount/parted.
+  pixman, libxkbcommon, cairo, pango, Mesa/EGL).
+- **weston НЕ ставится в системный `/usr/local` — только в staging, БЕЗ sudo**
+  (решение пользователя: не засорять системные каталоги). `meson --prefix=/usr/local`
+  оставляем (в бинарники зашиты RUNPATH и абсолютные пути хелперов `/usr/local/…`,
+  и это верно для целевой ОС — в её rootfs `/usr/local` есть), но `ninja install`
+  идёт под `DESTDIR="$BUILD/stage"` → всё ложится в `stage/usr/local/…` на хосте.
+  `добавить_программу.sh` вызывается с `DESTDIR=$STAGE`: **срезает staging-префикс**
+  (кладёт по ЛОГИЧЕСКИМ путям `/usr/local/*` в rootfs), а `ldd` находит staged-либы
+  (libweston-*, libwayland из subproject'а) через `LD_LIBRARY_PATH` на staging. При
+  пустом `DESTDIR` поведение прежнее. Итог: `собрать-weston.sh` рут не требует НИГДЕ
+  (ни локально, ни на CI); образ (`создать_образ.sh`) рут по-прежнему требует —
+  loop/mount/parted. ⚠ ЛЕГАСИ: если от СТАРОГО подхода в `build/` остались root-файлы
+  (`sudo ninja install` писал `meson-logs/install-log.txt` от рута) → новый install
+  падает `PermissionError`; починка разовая: `sudo chown -R "$USER" Программы/weston/build`.
   ВНИМАНИЕ: рабочая сборка пользователя — dev-снапшот **16.0.90 / 29d5739d
   (libweston-17)**, на 29 коммитов новее тега. Точный dev-коммит нельзя запинить
   shallow (freedesktop не отдаёт произвольный SHA / нет тега), поэтому субмодуль на

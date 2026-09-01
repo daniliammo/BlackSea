@@ -33,6 +33,14 @@ AUTO_WESTON="${AUTO_WESTON:-1}"  # 0 — не подхватывать ката�
 UPDATE_LIBC="${UPDATE_LIBC:-1}"  # 1 — автоматически обновлять glibc в дистрибутиве,
                                  #     если программе нужен более новый GLIBC_*
 
+# DESTDIR — если задан, программа установлена в STAGING-каталог: на диске файлы лежат
+# по $DESTDIR + логический путь (напр. $DESTDIR/usr/local/bin/weston), а «логический»
+# путь (для rootfs и как в RUNPATH бинарника) — БЕЗ него (/usr/local/bin/weston).
+# Позволяет раскладывать weston, установленный в свой каталог через `DESTDIR=… ninja
+# install`, НЕ трогая системный /usr/local и без sudo. Пусто → прежнее поведение.
+DESTDIR="${DESTDIR:-}"
+DESTDIR="${DESTDIR%/}"           # без хвостового слэша (чтобы срез префикса был точным)
+
 # Откуда брать связку glibc при обновлении (обычный путь на хосте).
 HOST_LIBC_DIR="${HOST_LIBC_DIR:-/usr/lib/x86_64-linux-gnu}"
 HOST_LD="${HOST_LD:-/lib64/ld-linux-x86-64.so.2}"
@@ -65,6 +73,29 @@ maybe_strip() {
     fi
 }
 
+# Логический путь = путь на диске без DESTDIR-префикса (если задан и присутствует).
+# Это путь, по которому файл кладётся в rootfs и на который указывает RUNPATH.
+logical_path() {
+    local p="$1"
+    if [[ -n "$DESTDIR" && "$p" == "$DESTDIR"/* ]]; then
+        printf '%s' "${p#"$DESTDIR"}"
+    else
+        printf '%s' "$p"
+    fi
+}
+
+# ldd с учётом staging: RUNPATH бинарника указывает на ЛОГИЧЕСКИЙ /usr/local/lib/…,
+# которого на хосте нет — там внутренние либы weston (libweston-*.so) и libwayland
+# из subproject'а. Даём ldd найти их в staging через LD_LIBRARY_PATH. Внешние
+# зависимости (cairo/pango/glibc) по-прежнему берутся из системного кэша.
+run_ldd() {
+    if [[ -n "$DESTDIR" ]]; then
+        LD_LIBRARY_PATH="$DESTDIR/usr/local/lib/x86_64-linux-gnu:$DESTDIR/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$@"
+    else
+        ldd "$@"
+    fi
+}
+
 # Скопировать зависимость по SONAME в lib64 (реальный файл, cp -L).
 copy_lib() {
     local name="$1" path="$2"
@@ -78,7 +109,7 @@ copy_lib() {
 # Разобрать ldd и растащить зависимости в lib64.
 resolve_deps() {
     local elf="$1" line name path
-    ldd "$elf" >/dev/null 2>&1 || { skip "ldd не разобрал ($elf) — без зависимостей"; return; }
+    run_ldd "$elf" >/dev/null 2>&1 || { skip "ldd не разобрал ($elf) — без зависимостей"; return; }
     while read -r line; do
         [[ "$line" == *"=>"* ]] || continue
         name="${line%% =>*}"; name="${name##*/}"
@@ -87,7 +118,7 @@ resolve_deps() {
         [[ -e "$path" ]] || { err "нет файла зависимости: $path"; continue; }
         [[ "$name" == ld-linux* || "$name" == ld-*.so* ]] && continue
         copy_lib "$name" "$path"
-    done < <(ldd "$elf")
+    done < <(run_ldd "$elf")
 }
 
 # Обработать один бинарник → bin/ + зависимости.
@@ -104,10 +135,11 @@ process_bin() {
     # а weston-desktop-shell запускает /usr/local/bin/weston-terminal. Поэтому
     # такие кладём по тому же абсолютному пути в rootfs, а не в /bin.
     # Остальное (обычные /bin, /usr/bin) — в rootfs/bin (это /bin, он в PATH).
-    local srcdir destdir
+    local srcdir logicaldir destdir
     srcdir="$(cd "$(dirname "$bin")" && pwd)"
-    case "$srcdir" in
-        /usr/local/*) destdir="$ROOTFS_DIR$srcdir" ;;
+    logicaldir="$(logical_path "$srcdir")"   # без staging-префикса (DESTDIR)
+    case "$logicaldir" in
+        /usr/local/*) destdir="$ROOTFS_DIR$logicaldir" ;;
         *)            destdir="$BIN_DIR" ;;
     esac
     mkdir -p "$destdir"
@@ -121,9 +153,10 @@ process_bin() {
 # Нужно для плагинов, которые weston грузит через dlopen по фикс. пути.
 process_dir() {
     local dir="$1"
-    dir="$(cd "$dir" && pwd)"          # абсолютный путь
-    local dst="$ROOTFS_DIR$dir"        # тот же путь внутри rootfs
-    info "Каталог модулей: $dir → rootfs$dir"
+    dir="$(cd "$dir" && pwd)"                 # абсолютный путь на диске (со staging)
+    local logicaldir; logicaldir="$(logical_path "$dir")"  # без DESTDIR-префикса
+    local dst="$ROOTFS_DIR$logicaldir"        # логический путь внутри rootfs
+    info "Каталог модулей: $dir → rootfs$logicaldir"
     mkdir -p "$dst"
     local f
     while IFS= read -r -d '' f; do
@@ -145,10 +178,11 @@ auto_weston_modules() {
     runpath="$(readelf -d "$bin" 2>/dev/null | awk -F'[][]' '/RUNPATH|RPATH/{print $2}' | head -1)"
     # runpath вида /usr/local/lib/x86_64-linux-gnu/weston  → prefixlib = /usr/local/lib/x86_64-linux-gnu
     [[ -n "$runpath" ]] || return 0
-    prefixlib="$(dirname "$runpath")"
+    prefixlib="$(dirname "$runpath")"   # логический /usr/local/lib/x86_64-linux-gnu
     local d
-    # trailing-slash glob → совпадают только каталоги (не .so-файлы рядом)
-    for d in "$prefixlib/weston/" "$prefixlib"/libweston-*/; do
+    # На диске каталоги модулей лежат под staging: $DESTDIR + логический путь (при
+    # пустом DESTDIR — обычный /usr/local). trailing-slash glob → только каталоги.
+    for d in "$DESTDIR$prefixlib/weston/" "$DESTDIR$prefixlib"/libweston-*/; do
         [[ -d "$d" ]] || continue
         process_dir "$d"
     done
