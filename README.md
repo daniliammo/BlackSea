@@ -58,3 +58,57 @@ make
 Сборка/создать_образ.sh          # собрать .img из boot/ и rootfs/
 Сборка/конвертировать_образ.sh   # .img → .vdi и .qcow2 для виртуальных машин
 ```
+
+## Известные проблемы сборки (другой ПК / GitHub CI)
+
+Тяжелее всего собирается **weston** (`Сборка/собрать-weston.sh`). Он не зависит от
+версий библиотек хоста: wayland-стек собирается из **форсированных fallback-
+subproject'ов** — скрипт сам генерит `.wrap`'ы и тянет пинованные версии
+(`wayland 1.26.0`, `wayland-protocols 1.49`, `display-info 0.2.0`). Отсюда типичные
+симптомы на чужом ПК и на раннере GitHub:
+
+- **`ERROR: requires argument not a string … got InternalDependency`** в
+  `libweston/meson.build`. Причина: на Ubuntu 24.04 (и на GitHub-раннере) `apt`
+  ставит **старый meson (1.3.2)**, который не умеет класть зависимость из
+  subproject'а в `Requires.private` pkg-config. Новый meson (≥ ~1.10) это
+  проглатывает — поэтому у себя вы можете не увидеть ошибку, а CI падает.
+  `собрать-weston.sh` **чинит это автоматически** (идемпотентный патч: заменяет
+  объекты зависимостей их pkg-config-именами — валидно на любой версии meson).
+  Пересобирать weston: просто запустить `Сборка/собрать-weston.sh` заново.
+
+- **`error: RPC failed; HTTP 502` при клоне `edid-decode`** (`git.linuxtv.org`).
+  **НЕ фатально** — это nested-wrap внутри `display-info`, нужный лишь её
+  собственным тестам; `display-info` сам отключает его (`buildable: NO (disabling)`)
+  и собирается дальше. Если сборка падает именно тут — перезапустите джоб (502
+  у linuxtv временный).
+
+- **`warning: refs/tags/1.26.0 … is not a commit!`** при клоне wayland/display-info.
+  **Безвредно** — артефакт shallow-клона на тег (`depth = 1`); сборка продолжается.
+
+- **Клоны идут с `gitlab.freedesktop.org`** (канонический дом wayland-стека).
+  Github-зеркал у `wayland`/`wayland-protocols`/`libdisplay-info` нет, поэтому
+  надёжной альтернативы freedesktop gitlab для них не существует.
+
+### Dev-зависимости weston (что доставить на хосте)
+
+Ubuntu/Debian (совпадает со списком в `.github/workflows/ci.yml`):
+
+```bash
+sudo apt-get install -y \
+  build-essential file binutils meson ninja-build pkg-config python3 \
+  libffi-dev libexpat1-dev \
+  libinput-dev libxkbcommon-dev libudev-dev libevdev-dev libmtdev-dev \
+  libpixman-1-dev libdrm-dev libgbm-dev libegl-dev libgles2-mesa-dev \
+  mesa-common-dev libgl-dev \
+  libcairo2-dev libpango1.0-dev libfreetype-dev libfontconfig-dev \
+  libpng-dev libjpeg-dev libwebp-dev liblcms2-dev libseat-dev
+```
+
+`libffi-dev` и `libexpat1-dev` нужны для сборки самого **wayland** из subproject'а
+(его тянет force-fallback). Ставить конкретные версии `libwayland-dev` /
+`wayland-protocols` **не требуется** — их версии-пины собираются из исходников.
+
+> Установка weston идёт в `/usr/local` (хелперы зовутся по абсолютным путям). Скрипт
+> использует `sudo` только если каталог не писабелен. Чтобы собирать weston без рута
+> разово: `sudo chown -R "$USER" /usr/local`. Скрипты **образа**
+> (`создать_образ.sh`) всё равно требуют рут (loop/mount/parted).

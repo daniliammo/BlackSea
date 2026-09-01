@@ -119,6 +119,22 @@ if grep -q "get_variable(pkgconfig: 'wayland_scanner')" "$SCANNER_MB"; then
     sed -i "s/get_variable(pkgconfig: 'wayland_scanner')/get_variable(pkgconfig: 'wayland_scanner', internal: 'wayland_scanner')/" "$SCANNER_MB"
 fi
 
+# Патч weston 16.0.0 (№2): libweston/meson.build генерит pkgconfig-файл libweston с
+# «requires_private: deps_for_libweston_users» (= [dep_wayland_server, dep_pixman,
+# dep_xkbcommon]). Когда wayland форсится из subproject (наш --force-fallback-for=
+# wayland выше), dep_wayland_server становится InternalDependency. СТАРЫЙ meson на
+# GitHub-раннере (Ubuntu 24.04 даёт meson 1.3.2) НЕ умеет класть internal-dependency
+# в Requires.private → «requires argument not a string … got InternalDependency».
+# (Новый meson, напр. 1.10, это уже проглатывает — потому локально не воспроизводится,
+# а CI падает.) Requires.private в .pc всё равно ссылается по ИМЕНАМ pkg-config,
+# поэтому заменяем список объектов на их pc-имена: валидно на ЛЮБОЙ версии meson и
+# не зависит от того, системный wayland или subproject. Идемпотентно (grep-guard).
+LIBW_MB="$SRC/libweston/meson.build"
+if grep -q "requires_private: deps_for_libweston_users," "$LIBW_MB"; then
+    info "Патчу libweston/meson.build: requires_private по pc-именам (совместимо со старым meson)…"
+    sed -i "s/requires_private: deps_for_libweston_users,/requires_private: ['wayland-server', 'pixman-1', 'xkbcommon'],/" "$LIBW_MB"
+fi
+
 # Форсим wayland-стек из subproject'ов (независимость от версий хоста) и гасим
 # необязательную обвязку wayland (docs/тесты/DTD-валидация тянут doxygen/xmlto/
 # libxml2 — они тут не нужны и только добавляют зависимости хоста).

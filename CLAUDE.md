@@ -74,6 +74,15 @@ cd Сборка && make          # оркестратор: программы �
   экономии от shallow почти нет.
 - НЕ пинить shallow-субмодуль на произвольный коммит: `git submodule update --depth 1`
   у клонирующих не сможет его дотянуть (freedesktop/kernel.org не отдают SHA shallow).
+- **ПРАВИЛО клонирования любых репозиториев (субмодули И `.wrap`-subproject'ы weston):
+  история коммитов НЕЖЕЛАТЕЛЬНА** — клонируем **shallow** (`--depth 1` / `depth = 1`,
+  пин на тег): быстрее, меньше трафика, надёжнее на CI. Полную историю тянуть, только
+  **если без неё никак** (наши разрабатываемые репы — им нужен `log`/`blame`/`bisect`).
+  **Источник — по возможности GitHub, а не GitLab, для надёжности** (github стабильнее
+  на клонах из CI). Исключение — где github-зеркала объективно нет: весь wayland-стек
+  (`wayland`, `wayland-protocols`, `libdisplay-info`) живёт ТОЛЬКО на
+  `gitlab.freedesktop.org` (проверено: `github.com/{wayland-project,emersion}/…` не
+  существуют) → для него оставляем freedesktop gitlab, shallow.
 
 ## Зафиксированные решения (НЕ переоткрывать)
 
@@ -231,6 +240,21 @@ cd Сборка && make          # оркестратор: программы �
   фолбэка → при scanner из subproject (internal-dependency) падает «Could not get
   an internal variable». Дописываем `internal: 'wayland_scanner'` — ровно как
   апстрим уже делает строкой ниже для `pkgdatadir` wayland-protocols.
+- **Патч weston 16.0.0 №2 (`libweston/meson.build`, sed, идемпотентно) — совместимость
+  со СТАРЫМ meson на раннере.** `libweston/meson.build:173` генерит pkgconfig-файл
+  libweston с `requires_private: deps_for_libweston_users` (= `[dep_wayland_server,
+  dep_pixman, dep_xkbcommon]`). Когда wayland форсится из subproject'а (наш
+  `--force-fallback-for=wayland`), `dep_wayland_server` — это **InternalDependency**.
+  **Старый meson (Ubuntu 24.04 / GitHub runner даёт 1.3.2)** НЕ умеет класть
+  internal-dependency в `Requires.private` → падает `ERROR: requires argument not a
+  string … got <InternalDependency …>`. **Новый meson (≥ ~1.10) это проглатывает**
+  (резолвит pc-имя из `override_dependency`) — поэтому ЛОКАЛЬНО (свежий meson) сборка
+  проходит, а на CI со старым meson падает. Скрипт заменяет список объектов на их
+  **pkg-config-имена-строки** `['wayland-server', 'pixman-1', 'xkbcommon']` — валидный
+  `Requires.private` на ЛЮБОЙ версии meson и независимо от того, системный wayland или
+  subproject. Симптом на CI, если патч не сработал: ошибка `requires argument not a
+  string` в `libweston/meson.build`. (Альтернатива — поднять meson на раннере ≥1.10,
+  но патч надёжнее: не зависит от версии тулчейна хоста, в духе воспроизводимости.)
 
 ### Загрузка / init
 - **cmdline ядра — из встроенного `CONFIG_CMDLINE`** (голый EFI-stub грузится
