@@ -40,6 +40,19 @@ DEFAULT_MESON_OPTS="
 # лишь когда включено управление цветом. Поэтому их держим модулями, не статикой.
 MESON_OPTS="${WESTON_MESON_OPTS:-$DEFAULT_MESON_OPTS}"
 
+# sudo нужен ТОЛЬКО для записи в /usr/local (install и чистка прошлой установки).
+# Если каталог уже писабельный для пользователя — работаем БЕЗ рута. Сделать его
+# своим разово:  sudo chown -R "$USER" /usr/local   (после этого рут не нужен).
+# Переопределяется: SUDO="" (форсить без рута) или SUDO="sudo" (принудительно).
+writable_prefix() {          # писабелен ли $PREFIX (по ближайшему существующему предку)
+    local d="$1"
+    while [[ ! -e "$d" && "$d" != "/" ]]; do d="$(dirname "$d")"; done
+    [[ -w "$d" ]]
+}
+if [[ -z "${SUDO+x}" ]]; then
+    if writable_prefix "$PREFIX"; then SUDO=""; else SUDO="sudo"; fi
+fi
+
 info() { printf '\033[1;34m»\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
 
@@ -147,7 +160,7 @@ ninja -C "$BUILD"
 LIBDIR="$PREFIX/lib/x86_64-linux-gnu"   # мультиарх-путь установки weston на этом хосте
 info "Убираю прошлые установки weston из $PREFIX и rootfs…"
 # shellcheck disable=SC2086  # намеренный glob-разворот путей weston
-sudo rm -rf "$LIBDIR"/libweston-* "$LIBDIR"/weston \
+$SUDO rm -rf "$LIBDIR"/libweston-* "$LIBDIR"/weston \
             "$PREFIX"/bin/weston "$PREFIX"/bin/weston-* \
             "$PREFIX"/libexec/weston-*
 rm -rf "$ROOT/rootfs$LIBDIR"/libweston-* "$ROOT/rootfs$LIBDIR"/weston \
@@ -157,8 +170,8 @@ rm -rf "$ROOT/rootfs$LIBDIR"/libweston-* "$ROOT/rootfs$LIBDIR"/weston \
 
 # 3. Установка в /usr/local (хелперы/модули weston зовутся по абсолютным путям
 #    этого префикса, а RUNPATH указывает сюда — поэтому ставим в реальный /usr/local).
-info "Устанавливаю weston в $PREFIX (нужен sudo)…"
-sudo ninja -C "$BUILD" install
+info "Устанавливаю weston в $PREFIX${SUDO:+ (нужен sudo)}…"
+$SUDO ninja -C "$BUILD" install
 
 # 4. Раскладка в rootfs. добавить_программу.sh: бинарники из /usr/local/* кладёт
 #    по тем же абсолютным путям, тянет зависимости в lib64 и авто-подхватывает

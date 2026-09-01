@@ -174,7 +174,11 @@ cd Сборка && make          # оркестратор: программы �
   rootfs через `добавить_программу.sh` (бинарники+deps+модули) + копирование иконок
   `/usr/local/share/weston`. Опции meson переопределяются `WESTON_MESON_OPTS`.
   Требует dev-зависимости weston на хосте (wayland, wayland-protocols, libinput,
-  pixman, libxkbcommon, cairo, pango, Mesa/EGL). Установка в /usr/local — под sudo.
+  pixman, libxkbcommon, cairo, pango, Mesa/EGL). Установка в /usr/local — под sudo
+  ТОЛЬКО если каталог не писабелен: скрипт сам определяет (`writable_prefix`) и
+  использует sudo лишь при надобности. Чтобы собирать БЕЗ рута — разово
+  `sudo chown -R "$USER" /usr/local` (или `SUDO=""` форсом). Образ
+  (`создать_образ.sh`) всё равно требует рут — loop/mount/parted.
   ВНИМАНИЕ: рабочая сборка пользователя — dev-снапшот **16.0.90 / 29d5739d
   (libweston-17)**, на 29 коммитов новее тега. Точный dev-коммит нельзя запинить
   shallow (freedesktop не отдаёт произвольный SHA / нет тега), поэтому субмодуль на
