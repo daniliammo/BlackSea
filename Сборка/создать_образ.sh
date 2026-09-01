@@ -28,6 +28,7 @@ BOOT_DIR="$(pwd)/boot"
 ROOTFS_DIR="$(pwd)/rootfs"
 OUTPUT_IMG="ОбразыДляЗагрузки/ОСЧерноеМоре.img"
 KERNEL_FILE="$BOOT_DIR/bzImage"
+KEYS_DIR="$ROOT/Сборка/ключи-secureboot"   # публичный ключ Secure Boot (если есть)
 
 symlinks -cr $ROOTFS_DIR
 
@@ -179,6 +180,16 @@ sudo cp -a "$ROOTFS_DIR"/. mnt/root/
 sudo mkdir -p mnt/root/proc mnt/root/sys mnt/root/dev mnt/root/run \
              mnt/root/tmp mnt/root/mnt mnt/root/root mnt/root/home
 
+# Публичный ключ Secure Boot в систему (/etc/secureboot): чтобы на реальном
+# железе можно было загрузиться без SB, затем прошить этот ключ в db прошивки и
+# включить SB. Приватный ключ сюда НЕ попадает. Кладём, только если ключи есть
+# (их создаёт шаг подписи ядра выше).
+if [[ -f "$KEYS_DIR/db.der" ]]; then
+    echo "Кладу публичный ключ в /etc/secureboot…"
+    sudo mkdir -p mnt/root/etc/secureboot
+    sudo cp "$KEYS_DIR"/db.der "$KEYS_DIR"/db.crt "$KEYS_DIR"/db.esl mnt/root/etc/secureboot/
+fi
+
 sudo umount mnt/root
 
 # Монтировать ESP раздел
@@ -203,6 +214,13 @@ else
     sudo cp "$KERNEL_FILE" mnt/esp/EFI/BOOT/BOOTX64.EFI
 fi
 rm -f "$SIGNED_KERNEL"
+
+# Публичный ключ на ESP (/EFI/keys) — чтобы UEFI Setup видел файл для «Enroll key
+# from file» ещё до монтирования корня. Только если ключи есть.
+if [[ -f "$KEYS_DIR/db.der" ]]; then
+    sudo mkdir -p mnt/esp/EFI/keys
+    sudo cp "$KEYS_DIR"/db.der "$KEYS_DIR"/db.esl mnt/esp/EFI/keys/
+fi
 
 # ================================================
 # ВАРИАНТ 2: Мультизагрузочный конфиг для EFI

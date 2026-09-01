@@ -22,15 +22,34 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KEYS_DIR="$SCRIPT_DIR/ключи-secureboot"
 KEY="$KEYS_DIR/db.key"   # приватный ключ (PEM), режим 0600, не коммитить
 CRT="$KEYS_DIR/db.crt"   # сертификат (PEM) — для sbsign
-DER="$KEYS_DIR/db.der"   # сертификат (DER) — для enroll в VBox/прошивку
+DER="$KEYS_DIR/db.der"   # сертификат (DER) — для enroll в прошивку через UI
+ESL="$KEYS_DIR/db.esl"   # EFI_SIGNATURE_LIST — для записи прямо в переменную db
 CN="OS Chernoe More Secure Boot"
+# owner-uuid нашего ключа в списке подписей (произвольный, но постоянный).
+OWNER_UUID="77a70000-0000-0000-0000-00000000c0de"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "Ошибка: нет '$1' на хосте." >&2; return 1; }; }
 
-# Создаёт пару ключ/сертификат, если её ещё нет. Идемпотентно.
+# Собирает EFI_SIGNATURE_LIST (.esl) из DER-сертификата: это ровно тот формат,
+# в котором прошивка хранит переменную db. Позволяет записать наш ключ прямо в
+# db (см. включить_secureboot.sh) без внешних утилит (efitools) — только python3.
+build_esl() {
+    need python3 || return 1
+    python3 - "$DER" "$ESL" "$OWNER_UUID" <<'PY'
+import struct, sys, uuid
+der = open(sys.argv[1], "rb").read()
+out, owner = sys.argv[2], uuid.UUID(sys.argv[3])
+X509 = uuid.UUID("a5c059a1-94e4-4aa7-87b5-ab155c2bf072")  # EFI_CERT_X509_GUID
+sig  = owner.bytes_le + der                    # SignatureOwner + данные (cert)
+hdr  = X509.bytes_le + struct.pack("<III", 28 + len(sig), 0, len(sig))
+open(out, "wb").write(hdr + sig)
+PY
+}
+
+# Создаёт пару ключ/сертификат (+ .esl), если её ещё нет. Идемпотентно.
 ensure_keys() {
     need openssl || return 1
-    if [[ -f "$KEY" && -f "$CRT" && -f "$DER" ]]; then
+    if [[ -f "$KEY" && -f "$CRT" && -f "$DER" && -f "$ESL" ]]; then
         return 0
     fi
     echo "Генерирую ключи Secure Boot в $KEYS_DIR …"
@@ -39,11 +58,14 @@ ensure_keys() {
     printf '*\n!.gitignore\n' > "$KEYS_DIR/.gitignore"
     # RSA-2048: обязательный минимум для Secure Boot (dbx-совместимо, RSA-4096
     # некоторые прошивки не проверяют). SHA-256, срок 10 лет.
-    openssl req -new -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
-        -subj "/CN=$CN/" -keyout "$KEY" -out "$CRT"
+    if [[ ! -f "$KEY" || ! -f "$CRT" ]]; then
+        openssl req -new -x509 -newkey rsa:2048 -nodes -sha256 -days 3650 \
+            -subj "/CN=$CN/" -keyout "$KEY" -out "$CRT"
+    fi
     openssl x509 -in "$CRT" -outform DER -out "$DER"
+    build_esl || { echo "Ошибка: не собрать db.esl (нужен python3)." >&2; return 1; }
     chmod 600 "$KEY"
-    echo "Готово: db.key (приватный, 0600), db.crt (PEM), db.der (DER)."
+    echo "Готово: db.key (0600), db.crt (PEM), db.der (DER), db.esl (для db)."
 }
 
 case "${1:-}" in
