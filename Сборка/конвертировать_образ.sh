@@ -66,7 +66,10 @@ if VBoxManage showvminfo "$VM_NAME" >/dev/null 2>&1; then
     # перекрывают свежий rootfs. Симптом: ядро не находит init (ENOENT / «No
     # working init found»), хотя в образе всё на месте. Предупреждаем (не трогаем
     # снимки автоматически — это разрушительно).
-    snaps="$(VBoxManage snapshot "$VM_NAME" list --machinereadable 2>/dev/null | grep -c '^SnapshotName')"
+    # grep -c при 0 совпадений печатает «0» и возвращает код 1. С set -e присваивание
+    # с ненулевым кодом ОБОРВАЛО БЫ скрипт (симптом: конвертация «падает» ровно после
+    # sethduuid, хотя всё сделано). `|| true` гасит код, snaps остаётся «0».
+    snaps="$(VBoxManage snapshot "$VM_NAME" list --machinereadable 2>/dev/null | grep -c '^SnapshotName' || true)"
     if [[ "${snaps:-0}" -gt 0 ]]; then
         ctl="$(VBoxManage showvminfo "$VM_NAME" --machinereadable 2>/dev/null | sed -n 's/^storagecontrollername0="\(.*\)"/\1/p')"
         cat >&2 <<MSG
