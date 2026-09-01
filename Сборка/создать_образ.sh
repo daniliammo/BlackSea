@@ -83,6 +83,27 @@ if [[ ! -f "$INIT_BIN" ]] || ! file -b "$INIT_BIN" | grep -q ELF; then
     echo "Ошибка: rootfs/sbin/init отсутствует или не ELF — систему нечем инициализировать." >&2
     exit 1
 fi
+# Досеваем динамический загрузчик. добавить_программу.sh НАМЕРЕННО не копирует
+# ld-linux (resolve_deps его пропускает), а libc и прочие .so тянет как зависимости.
+# На машине с прошлыми сборками загрузчик в rootfs уже лежит, но на ЧИСТОМ клоне
+# (другой ПК / CI после `git clean`) его нет → проверка ниже валит сборку. Кладём
+# хостовый загрузчик (он парный к хостовой glibc, которую ensure_glibc уже положил
+# в rootfs). Так `cd Сборка && make` самодостаточен на любом ПК, без отдельного шага.
+LOADER_REL="lib64/ld-linux-x86-64.so.2"
+if [[ ! -e "$ROOTFS_DIR/$LOADER_REL" ]]; then
+    HOST_LOADER=""
+    for cand in /lib64/ld-linux-x86-64.so.2 /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2; do
+        [[ -e "$cand" ]] && { HOST_LOADER="$cand"; break; }
+    done
+    if [[ -n "$HOST_LOADER" ]]; then
+        echo "Досеваю динамический загрузчик из $HOST_LOADER → rootfs/$LOADER_REL"
+        mkdir -p "$ROOTFS_DIR/lib64"
+        cp -L "$HOST_LOADER" "$ROOTFS_DIR/$LOADER_REL"
+        chmod 0755 "$ROOTFS_DIR/$LOADER_REL"
+    fi
+    # Не нашли хостовый загрузчик — не молчим, проверка ниже даст понятную ошибку.
+fi
+
 for f in lib64/ld-linux-x86-64.so.2 lib64/libc.so.6; do
     [[ -e "$ROOTFS_DIR/$f" ]] || {
         echo "Ошибка: в rootfs нет '$f' — динамический init/busybox не запустится, ядро зависнет." >&2
@@ -117,7 +138,9 @@ echo "Размер образа: ${TOTAL_MB} MiB"
 echo "Фиксированный UUID: $ROOT_UUID"
 echo ""
 
-# Создать образ
+# Создать образ. Каталог вывода в .gitignore (git не хранит пустые/выходные папки),
+# поэтому на чистом клоне его нет — создаём, иначе dd падает «No such file».
+mkdir -p "$(dirname "$OUTPUT_IMG")"
 echo "Создаю raw disk image..."
 dd if=/dev/zero of="$OUTPUT_IMG" bs=1M count="$TOTAL_MB" status=progress conv=fsync
 sync

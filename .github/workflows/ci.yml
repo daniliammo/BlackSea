@@ -12,11 +12,16 @@ concurrency:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # 1. Быстрые проверки: синтаксис скриптов + компиляция оркестратора.
-  #    Без субмодулей и без sudo — секунды.
+  # ОДНО задание: как на обычном ПК — установить зависимости и запустить
+  #   cd Сборка && make
+  # Оркестратор Сборка/основа.c сам собирает ядро (bzImage), busybox, init и
+  # weston, раскладывает в rootfs и создаёт образ (создать_образ.sh →
+  # конвертировать_образ.sh). VBoxManage на раннере нет — конвертация делает
+  # только qcow2 (qemu-img) и не рвётся. Никаких отдельных джобов/артефактов
+  # ядра: одна команда, воспроизводимая где угодно.
   # ---------------------------------------------------------------------------
-  checks:
-    name: Проверки (скрипты + основа.c)
+  build:
+    name: Сборка (deps + make)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,194 +29,53 @@ jobs:
           submodules: false
           fetch-depth: 1
 
-      - name: Установка shellcheck
-        run: sudo apt-get update && sudo apt-get install -y shellcheck
-
-      - name: Синтаксис shell-скриптов (bash -n) — жёсткая проверка
-        run: |
-          set -e
-          git -c core.quotepath=false ls-files '*.sh' | while IFS= read -r f; do
-            echo "bash -n $f"
-            bash -n "$f"
-          done
-
-      - name: shellcheck (информационно, не блокирует)
-        continue-on-error: true
-        run: |
-          git -c core.quotepath=false ls-files '*.sh' | while IFS= read -r f; do
-            echo "== $f =="
-            shellcheck -S warning "$f" || true
-          done
-
-      - name: Компиляция оркестратора основа.c
-        run: |
-          gcc -Wall -Wextra -O3 -s -fdata-sections -ffunction-sections \
-              -Wl,--gc-sections -flto -fno-stack-protector \
-              "Сборка/основа.c" -o /tmp/orchestrator
-          echo "Компиляция основа.c: OK"
-
-  # ---------------------------------------------------------------------------
-  # 2. Сборка ядра — ТОЛЬКО bzImage (без модулей), ядро клонируется без истории.
-  # ---------------------------------------------------------------------------
-  kernel:
-    name: Сборка ядра (bzImage, без модулей)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: false
-          fetch-depth: 1
-
-      - name: Зависимости сборки ядра
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential flex bison libssl-dev \
-            libelf-dev bc libncurses-dev dwarves cpio kmod ccache
-
-      - name: Клонирование ядра без истории (shallow, depth 1)
-        run: git submodule update --init --depth 1 "Программы/Ядро"
-
-      - name: Восстановление версионированного конфига ядра
-        run: cp "Сборка/ядро.config" "Программы/Ядро/.config"
-
-      - name: Кэш ccache (ускоряет повторные сборки)
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ccache
-          key: ccache-kernel-${{ github.sha }}
-          restore-keys: |
-            ccache-kernel-
-
-      - name: Сборка bzImage (модули НЕ собираются — цель bzImage)
-        run: |
-          export PATH="/usr/lib/ccache:$PATH"
-          cd "Программы/Ядро"
-          make olddefconfig
-          make -j"$(nproc)" bzImage
-          ls -la arch/x86/boot/bzImage
-
-      - name: Копирование ядра в boot/
-        run: cp "Программы/Ядро/arch/x86/boot/bzImage" boot/bzImage
-
-      - name: Артефакт bzImage
-        uses: actions/upload-artifact@v4
-        with:
-          name: bzImage
-          path: boot/bzImage
-          if-no-files-found: error
-
-  # ---------------------------------------------------------------------------
-  # 3. Сборка бинарников в rootfs + создание образа.
-  #    Репозиторий версионирует ТОЛЬКО исходники (в rootfs нет ELF/.so), поэтому
-  #    джоб сам собирает busybox, init и weston и раскладывает их в rootfs, как
-  #    это делает локальный оркестратор Сборка/основа.c. Ядро берём готовым из
-  #    джоба kernel (артефакт bzImage) — второй раз не собираем.
-  #    БЕЗ VBoxManage: .img создаётся скриптом, дополнительно даём qcow2 (qemu).
-  # ---------------------------------------------------------------------------
-  image:
-    name: Сборка rootfs + образ (.img + qcow2, без VirtualBox)
-    needs: kernel
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: false
-          fetch-depth: 1
-
-      - name: Скачать собранное ядро в boot/
-        uses: actions/download-artifact@v4
-        with:
-          name: bzImage
-          path: boot
-
-      # Инициализируем ТОЛЬКО нужные субмодули (без Ядра — оно уже собрано).
-      # depth 1 достаточно для сборки.
-      - name: Инициализация субмодулей (busybox, Инициализация, weston)
+      # Инициализируем ТОЛЬКО загрузочные субмодули (depth 1 достаточно для сборки).
+      # Остальные Программы/* (ТранспиляторКонда и т.п.) не нужны для образа —
+      # основа.c пропускает пустые/уна­циализированные каталоги (нет Makefile).
+      - name: Инициализация субмодулей (Ядро, busybox, Инициализация, weston)
         run: |
           git submodule update --init --depth 1 \
-            "Программы/busybox" "Программы/Инициализация" "Программы/weston"
+            "Программы/Ядро" "Программы/busybox" \
+            "Программы/Инициализация" "Программы/weston"
 
-      - name: Зависимости сборки busybox/init/weston + создания образа
+      # Всё, что нужно для ядра + busybox + weston (meson/ninja + wayland из
+      # subproject'ов) + создания образа (loop/parted/mkfs) + qcow2 (qemu-img).
+      - name: Установка зависимостей
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            build-essential file binutils \
+            build-essential file binutils ccache \
+            flex bison libssl-dev libelf-dev bc libncurses-dev dwarves cpio kmod \
             meson ninja-build pkg-config python3 \
-            libwayland-dev wayland-protocols \
             libffi-dev libexpat1-dev \
             libinput-dev libxkbcommon-dev libudev-dev libevdev-dev libmtdev-dev \
             libpixman-1-dev libdrm-dev libgbm-dev libegl-dev libgles2-mesa-dev \
             mesa-common-dev libgl-dev \
             libcairo2-dev libpango1.0-dev libfreetype-dev libfontconfig-dev \
-            libpng-dev libjpeg-dev libwebp-dev liblcms2-dev \
-            libseat-dev \
+            libpng-dev libjpeg-dev libwebp-dev liblcms2-dev libseat-dev \
             parted gdisk dosfstools e2fsprogs symlinks util-linux libc-bin qemu-utils
 
-      # busybox: свой kbuild (как в основа.c). Конфиг — версионированный
-      # Сборка/busybox.config; install раскладывает applet-symlink'и в rootfs.
-      - name: Сборка busybox → rootfs
+      # Единственное «не лишнее» ускорение: кэш ccache между прогонами. Без него
+      # ядро (bzImage) компилируется с нуля каждый push (~20–40 мин). ccache
+      # подхватывается прозрачно через PATH=/usr/lib/ccache (ниже) — и для ядра,
+      # и для weston.
+      - name: Кэш ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ github.sha }}
+          restore-keys: |
+            ccache-
+
+      # Ровно то, что делает пользователь на своём ПК: одна команда.
+      # PATH=/usr/lib/ccache подсовывает ccache-обёртки вместо gcc/cc.
+      - name: Сборка — cd Сборка && make
         run: |
-          cp "Сборка/busybox.config" "Программы/busybox/.config"
-          # busybox: цель oldconfig (НЕ olddefconfig — та ядерная); неинтерактивно.
-          yes '' | make -C "Программы/busybox" oldconfig
-          make -C "Программы/busybox" -j"$(nproc)"
-          make -C "Программы/busybox" \
-            CONFIG_PREFIX="$GITHUB_WORKSPACE/rootfs" install
-          # busybox динамический → подтянуть его зависимости (libc и пр.) в lib64.
-          ./добавить_программу.sh "$GITHUB_WORKSPACE/rootfs/bin/busybox"
-
-      # Инициализация (наш init): обычный make → Собранное/init → rootfs/sbin/init.
-      - name: Сборка init → rootfs/sbin/init
-        run: |
-          make -C "Программы/Инициализация" -j"$(nproc)"
-          mkdir -p rootfs/sbin
-          # busybox install уже создал sbin/init как СИМЛИНК на busybox — снимаем
-          # его, иначе cp пишет ПО симлинку и затирает сам busybox (sh/mount/все
-          # applet'ы ломаются). После rm получаем обычный файл кастомного init.
-          rm -f rootfs/sbin/init
-          cp "Программы/Инициализация/Собранное/init" rootfs/sbin/init
-          chmod 0755 rootfs/sbin/init
-
-      # weston: meson/ninja через тот же скрипт, что и локальный оркестратор.
-      # Он ставит weston в /usr/local и раскладывает бинарники + зависимости
-      # (в т.ч. связку glibc) в rootfs/lib64 через добавить_программу.sh.
-      - name: Сборка weston → rootfs
-        run: Сборка/собрать-weston.sh
-
-      # добавить_программу.sh намеренно НЕ копирует динамический загрузчик
-      # (resolve_deps пропускает ld-linux). В минимальном rootfs его нужно
-      # положить явно — иначе не запускается ни один динамический бинарник.
-      - name: Досеять динамический загрузчик (ld-linux) в rootfs/lib64
-        run: |
-          cp -L /lib64/ld-linux-x86-64.so.2 rootfs/lib64/ld-linux-x86-64.so.2
-          chmod 0755 rootfs/lib64/ld-linux-x86-64.so.2
-
-      - name: Проверка целостности rootfs (loader + libc на месте)
-        run: |
-          set -e
-          for f in rootfs/sbin/init rootfs/bin/busybox rootfs/usr/local/bin/weston \
-                   rootfs/lib64/ld-linux-x86-64.so.2 rootfs/lib64/libc.so.6; do
-            [ -e "$f" ] || { echo "ОТСУТСТВУЕТ: $f"; exit 1; }
-          done
-          # Страховка от симлинк-клоббера: busybox не должен оказаться копией init
-          # (если cp прошёл по симлинку sbin/init → затёр bin/busybox).
-          if cmp -s rootfs/bin/busybox rootfs/sbin/init; then
-            echo "ОШИБКА: rootfs/bin/busybox совпадает с init — busybox затёрт"; exit 1
-          fi
-          echo "rootfs: базовые бинарники и связка glibc на месте."
-
-      - name: Каталог для образов (в git пуст)
-        run: mkdir -p ОбразыДляЗагрузки
-
-      - name: Создание образа (.img)  # заодно генерит ld.so.cache (ldconfig)
-        run: Сборка/создать_образ.sh
-
-      - name: Конвертация в qcow2 (qemu-img, без VirtualBox)
-        run: |
-          qemu-img convert -f raw -O qcow2 \
-            "ОбразыДляЗагрузки/ОСЧерноеМоре.img" \
-            "ОбразыДляЗагрузки/ОСЧерноеМоре.qcow2"
-          ls -la ОбразыДляЗагрузки/
+          export PATH="/usr/lib/ccache:$PATH"
+          ccache --max-size=2G >/dev/null 2>&1 || true
+          make -C Сборка
+          echo "--- ccache статистика ---"
+          ccache -s || true
 
       - name: Артефакт образа (qcow2)
         uses: actions/upload-artifact@v4
