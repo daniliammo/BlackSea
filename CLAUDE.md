@@ -196,6 +196,11 @@ cd Сборка && make          # оркестратор: программы �
   wayland/wayland-protocols и не переживают чистый клон на теге — потому генерим
   из скрипта. `edid-decode` (nested-wrap в display-info, `git.linuxtv.org`) иногда
   отдаёт 502 — НЕ фатально: display-info отключает его (нужен лишь своим тестам).
+  Плюс `собрать-weston.sh` патчит `protocol/meson.build` (sed, идемпотентно): у
+  weston 16.0.0 там `get_variable(pkgconfig: 'wayland_scanner')` без internal-
+  фолбэка → при scanner из subproject (internal-dependency) падает «Could not get
+  an internal variable». Дописываем `internal: 'wayland_scanner'` — ровно как
+  апстрим уже делает строкой ниже для `pkgdatadir` wayland-protocols.
 
 ### Загрузка / init
 - **`/etc/profile` НЕ читается на загрузке** — init запускает `/bin/sh` как

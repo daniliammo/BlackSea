@@ -94,6 +94,18 @@ depth = 1
 libdisplay-info = libdisplay_info_dep
 WRAP
 
+# Патч weston 16.0.0: protocol/meson.build берёт путь до wayland-scanner ТОЛЬКО
+# как pkgconfig-переменную. Когда scanner приходит из subproject (наш форс выше),
+# это internal-dependency → get_variable(pkgconfig:) падает с «Could not get an
+# internal variable». Апстрим для СОСЕДНЕЙ строки (pkgdatadir wayland-protocols)
+# уже указывает и pkgconfig, и internal — а для scanner забыл. Правим ту же строку
+# симметрично. Идемпотентно: якорь на закрывающей ')', повторный прогон — no-op.
+SCANNER_MB="$SRC/protocol/meson.build"
+if grep -q "get_variable(pkgconfig: 'wayland_scanner')" "$SCANNER_MB"; then
+    info "Патчу protocol/meson.build: internal-fallback для wayland-scanner…"
+    sed -i "s/get_variable(pkgconfig: 'wayland_scanner')/get_variable(pkgconfig: 'wayland_scanner', internal: 'wayland_scanner')/" "$SCANNER_MB"
+fi
+
 # Форсим wayland-стек из subproject'ов (независимость от версий хоста) и гасим
 # необязательную обвязку wayland (docs/тесты/DTD-валидация тянут doxygen/xmlto/
 # libxml2 — они тут не нужны и только добавляют зависимости хоста).
