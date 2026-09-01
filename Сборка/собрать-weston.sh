@@ -48,24 +48,37 @@ command -v meson >/dev/null || { err "нет meson"; exit 1; }
 command -v ninja >/dev/null || { err "нет ninja"; exit 1; }
 [[ -x "$ROOT/добавить_программу.sh" ]] || { err "нет $ROOT/добавить_программу.sh"; exit 1; }
 
-# 0. wayland-protocols: weston 16.0.0 требует >= 1.46 и объявляет fallback на
-#    subproject 'wayland-protocols', но САМ .wrap в апстриме не поставляет. На
-#    рантайм-хосте (напр. GitHub runner) pkg-config даёт лишь 1.45 → meson падает
-#    «Neither a subproject directory nor a wayland-protocols.wrap file was found».
-#    Кладём .wrap в subprojects/ до setup. Источник — канонический freedesktop
-#    gitlab (надёжного github-зеркала wayland-protocols не существует; оттуда же
-#    тянется display-info). Тег 1.46 = минимум по требованию, fetch-абелен depth 1.
-info "Готовлю wrap wayland-protocols (fallback subproject)…"
+# 0. Fallback-subproject'ы для wayland-стека. weston 16.0.0 требует свежие
+#    wayland-protocols (>= 1.46) и wayland-scanner (>= 1.23), но объявленных
+#    .wrap в апстриме не поставляет, а на рантайм-хосте (напр. GitHub runner)
+#    системный wayland-стек старый (protocols 1.45, scanner 1.22) → meson падает.
+#    Кладём .wrap в subprojects/ до setup, пинясь на ПОСЛЕДНИЕ релизы. Источник —
+#    канонический freedesktop gitlab (надёжного github-зеркала wayland нет;
+#    оттуда же тянется display-info). Теги fetch-абельны depth 1.
+#    meson всё равно предпочитает системные библиотеки, где их версия годится;
+#    из subproject реально собирается лишь то, чего в системе не хватает по версии
+#    (здесь — wayland-scanner для wayland-protocols).
+info "Готовлю wrap'ы wayland-протоколов/стека (fallback subproject'ы)…"
 mkdir -p "$SRC/subprojects"
 cat > "$SRC/subprojects/wayland-protocols.wrap" <<'WRAP'
 [wrap-git]
 directory = wayland-protocols
 url = https://gitlab.freedesktop.org/wayland/wayland-protocols.git
-revision = 1.46
+revision = 1.49
 depth = 1
 
 [provide]
 wayland-protocols = wayland_protocols
+WRAP
+cat > "$SRC/subprojects/wayland.wrap" <<'WRAP'
+[wrap-git]
+directory = wayland
+url = https://gitlab.freedesktop.org/wayland/wayland.git
+revision = 1.26.0
+depth = 1
+
+[provide]
+dependency_names = wayland-client, wayland-server, wayland-cursor, wayland-egl, wayland-scanner
 WRAP
 
 # 1. Конфигурация meson (идемпотентно) и сборка.
