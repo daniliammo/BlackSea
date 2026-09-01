@@ -61,6 +61,26 @@ VBoxManage internalcommands sethduuid "$NAME.vdi" "$VDI_UUID"
 # и вкатываем наш сертификат в db (см. включить_secureboot.sh: правит ВЫКЛЮЧЕННУЮ
 # VM). Если нет — подробно объясняем, что и как назвать.
 if VBoxManage showvminfo "$VM_NAME" >/dev/null 2>&1; then
+    # СНИМКИ несовместимы с этим workflow: VM грузит дельту снимка ПОВЕРХ базового
+    # диска, а каждая сборка ПЕРЕЗАПИСЫВАЕТ базовый .vdi → старые блоки снимка
+    # перекрывают свежий rootfs. Симптом: ядро не находит init (ENOENT / «No
+    # working init found»), хотя в образе всё на месте. Предупреждаем (не трогаем
+    # снимки автоматически — это разрушительно).
+    snaps="$(VBoxManage snapshot "$VM_NAME" list --machinereadable 2>/dev/null | grep -c '^SnapshotName')"
+    if [[ "${snaps:-0}" -gt 0 ]]; then
+        ctl="$(VBoxManage showvminfo "$VM_NAME" --machinereadable 2>/dev/null | sed -n 's/^storagecontrollername0="\(.*\)"/\1/p')"
+        cat >&2 <<MSG
+
+⚠ ВНИМАНИЕ: у VM «$VM_NAME» есть снимки ($snaps шт.). Она грузит ДЕЛЬТУ снимка,
+  а НЕ свежесобранный $NAME.vdi → старый rootfs перекрывает новый, и ядро не
+  найдёт init. Уберите снимки и подключите свежий базовый диск:
+    VBoxManage controlvm "$VM_NAME" poweroff 2>/dev/null || true
+    VBoxManage storageattach "$VM_NAME" --storagectl "${ctl:-SATA}" --port 0 --device 0 --medium none
+    VBoxManage snapshot "$VM_NAME" delete <имя-снимка>     # для каждого снимка
+    VBoxManage storageattach "$VM_NAME" --storagectl "${ctl:-SATA}" --port 0 --device 0 --type hdd --medium "$(pwd)/$NAME.vdi"
+  И БОЛЬШЕ НЕ ДЕЛАЙТЕ снимки — каждая сборка пересоздаёт $NAME.vdi.
+MSG
+    fi
     echo "Виртуалка «$VM_NAME» найдена — включаю Secure Boot и вкатываю ключ…"
     if ! "$ENROLL_SH" "$VM_NAME"; then
         cat >&2 <<MSG
