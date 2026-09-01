@@ -122,7 +122,16 @@ info "Конфигурирую weston (meson, prefix=$PREFIX)…"
 # meson-info появляется только после успешной конфигурации. Если его нет
 # (первый запуск или прошлый setup упал) — конфигурируем заново с чистого листа.
 if [[ -d "$BUILD/meson-info" ]]; then
-    meson setup --reconfigure "$BUILD" "$SRC" --prefix="$PREFIX" $FORCE_FALLBACK $SUBPROJ_OPTS $MESON_OPTS
+    # Пытаемся переконфигурировать инкрементально. НО если build-каталог остался
+    # от СТАРОЙ версии скрипта (без wayland-subproject'а), meson не знает опций
+    # -Dwayland:* / -Dwayland-protocols:* и падает «Unknown option: wayland:…».
+    # На чистом клоне (CI) этой проблемы нет, а на локальной машине со старым
+    # build/ — есть. Ловим сбой и переконфигурируем начисто.
+    meson setup --reconfigure "$BUILD" "$SRC" --prefix="$PREFIX" $FORCE_FALLBACK $SUBPROJ_OPTS $MESON_OPTS || {
+        info "reconfigure не удался (старый build-каталог?) — конфигурирую начисто…"
+        rm -rf "$BUILD"
+        meson setup "$BUILD" "$SRC" --prefix="$PREFIX" $FORCE_FALLBACK $SUBPROJ_OPTS $MESON_OPTS
+    }
 else
     rm -rf "$BUILD"
     meson setup "$BUILD" "$SRC" --prefix="$PREFIX" $FORCE_FALLBACK $SUBPROJ_OPTS $MESON_OPTS
