@@ -48,17 +48,20 @@ command -v meson >/dev/null || { err "нет meson"; exit 1; }
 command -v ninja >/dev/null || { err "нет ninja"; exit 1; }
 [[ -x "$ROOT/добавить_программу.sh" ]] || { err "нет $ROOT/добавить_программу.sh"; exit 1; }
 
-# 0. Fallback-subproject'ы для wayland-стека. weston 16.0.0 требует свежие
-#    wayland-protocols (>= 1.46) и wayland-scanner (>= 1.23), но объявленных
-#    .wrap в апстриме не поставляет, а на рантайм-хосте (напр. GitHub runner)
-#    системный wayland-стек старый (protocols 1.45, scanner 1.22) → meson падает.
-#    Кладём .wrap в subprojects/ до setup, пинясь на ПОСЛЕДНИЕ релизы. Источник —
-#    канонический freedesktop gitlab (надёжного github-зеркала wayland нет;
-#    оттуда же тянется display-info). Теги fetch-абельны depth 1.
-#    meson всё равно предпочитает системные библиотеки, где их версия годится;
-#    из subproject реально собирается лишь то, чего в системе не хватает по версии
-#    (здесь — wayland-scanner для wayland-protocols).
-info "Готовлю wrap'ы wayland-протоколов/стека (fallback subproject'ы)…"
+# 0. Fallback-subproject'ы для wayland-стека, чтобы сборка НЕ зависела от версий
+#    хостовых библиотек. weston 16.0.0 требует свежие wayland-protocols (>= 1.46)
+#    и wayland-scanner (>= 1.25 для protocols 1.49), но апстрим не поставляет
+#    нужных .wrap, а на типовом хосте (GitHub runner, Ubuntu 24.04) стек старый
+#    (protocols 1.45, scanner 1.22) → meson падает. Генерируем .wrap до setup и
+#    ФОРСИМ их через --force-fallback-for (см. FORCE_FALLBACK ниже): meson тянет
+#    и собирает пинованные версии из исходников, игнорируя системные. Это делает
+#    сборку воспроизводимой на любом ПК (нужны лишь сурсы + тулчейн, не конкретные
+#    версии libwayland-dev). Источник — канонический freedesktop gitlab (надёжного
+#    github-зеркала wayland нет; оттуда же тянется display-info). Все клоны shallow
+#    (depth = 1), пинятся на теги (тег fetch-абелен на depth 1, в отличие от SHA).
+#    display-info оставляем на 0.2.0 — эту версию API weston 16.0.0 и поддерживает
+#    (0.3/0.4 ломают сборку weston); апстримный .wrap просто дублируем с depth=1.
+info "Готовлю wrap'ы wayland-стека (форсированные fallback-subproject'ы)…"
 mkdir -p "$SRC/subprojects"
 cat > "$SRC/subprojects/wayland-protocols.wrap" <<'WRAP'
 [wrap-git]
@@ -80,16 +83,37 @@ depth = 1
 [provide]
 dependency_names = wayland-client, wayland-server, wayland-cursor, wayland-egl, wayland-scanner
 WRAP
+cat > "$SRC/subprojects/display-info.wrap" <<'WRAP'
+[wrap-git]
+directory = display-info
+url = https://gitlab.freedesktop.org/emersion/libdisplay-info.git
+revision = 0.2.0
+depth = 1
+
+[provide]
+libdisplay-info = libdisplay_info_dep
+WRAP
+
+# Форсим wayland-стек из subproject'ов (независимость от версий хоста) и гасим
+# необязательную обвязку wayland (docs/тесты/DTD-валидация тянут doxygen/xmlto/
+# libxml2 — они тут не нужны и только добавляют зависимости хоста).
+FORCE_FALLBACK="--force-fallback-for=wayland,wayland-protocols"
+SUBPROJ_OPTS="
+  -Dwayland:documentation=false
+  -Dwayland:dtd_validation=false
+  -Dwayland:tests=false
+  -Dwayland-protocols:tests=false
+"
 
 # 1. Конфигурация meson (идемпотентно) и сборка.
 info "Конфигурирую weston (meson, prefix=$PREFIX)…"
 # meson-info появляется только после успешной конфигурации. Если его нет
 # (первый запуск или прошлый setup упал) — конфигурируем заново с чистого листа.
 if [[ -d "$BUILD/meson-info" ]]; then
-    meson setup --reconfigure "$BUILD" "$SRC" --prefix="$PREFIX" $MESON_OPTS
+    meson setup --reconfigure "$BUILD" "$SRC" --prefix="$PREFIX" $FORCE_FALLBACK $SUBPROJ_OPTS $MESON_OPTS
 else
     rm -rf "$BUILD"
-    meson setup "$BUILD" "$SRC" --prefix="$PREFIX" $MESON_OPTS
+    meson setup "$BUILD" "$SRC" --prefix="$PREFIX" $FORCE_FALLBACK $SUBPROJ_OPTS $MESON_OPTS
 fi
 
 info "Собираю weston (ninja)…"

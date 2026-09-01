@@ -138,6 +138,7 @@ jobs:
             build-essential file binutils \
             meson ninja-build pkg-config python3 \
             libwayland-dev wayland-protocols \
+            libffi-dev libexpat1-dev \
             libinput-dev libxkbcommon-dev libudev-dev libevdev-dev libmtdev-dev \
             libpixman-1-dev libdrm-dev libgbm-dev libegl-dev libgles2-mesa-dev \
             mesa-common-dev libgl-dev \

@@ -181,6 +181,21 @@ cd Сборка && make          # оркестратор: программы �
   ближайшем релизе 16.0.0. При пересборке weston из субмодуля версия/soname может
   отличаться — тогда просто заново прогнать `добавить_программу.sh` (обновит rootfs
   согласованно). Для точной сборки 29d5739d — держать отдельный полный клон.
+- **wayland-стек — форсированные fallback-subproject'ы (НЕ зависим от версий хоста).**
+  weston 16.0.0 требует свежие `wayland-protocols` (>= 1.46) и `wayland-scanner`
+  (>= 1.25 для protocols 1.49), а типовой хост (Ubuntu 24.04 / GitHub runner) даёт
+  старьё (protocols 1.45, scanner 1.22) → meson падал. `собрать-weston.sh` перед
+  `meson setup` генерит `subprojects/*.wrap` и форсит их `--force-fallback-for=`
+  `wayland,wayland-protocols`: meson СОБИРАЕТ пинованные версии из исходников,
+  игнорируя системные. Так сборка воспроизводима на любом ПК из одних сурсов.
+  Пины: `wayland 1.26.0`, `wayland-protocols 1.49`, `display-info 0.2.0` (0.3/0.4
+  ломают API weston 16 — НЕ поднимать). Все .wrap — `depth = 1` на тег. Обвязка
+  wayland (docs/tests/dtd_validation) выключена — иначе тянет doxygen/xmlto/libxml2.
+  Билд-deps хоста для сборки wayland из сурсов: **`libffi-dev`, `libexpat1-dev`**
+  (добавлены в `ci.yml`). Апстримные .wrap (в самом субмодуле) не поставляют
+  wayland/wayland-protocols и не переживают чистый клон на теге — потому генерим
+  из скрипта. `edid-decode` (nested-wrap в display-info, `git.linuxtv.org`) иногда
+  отдаёт 502 — НЕ фатально: display-info отключает его (нужен лишь своим тестам).
 
 ### Загрузка / init
 - **`/etc/profile` НЕ читается на загрузке** — init запускает `/bin/sh` как
