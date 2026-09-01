@@ -187,8 +187,22 @@ echo "Настраиваю ESP раздел..."
 sudo mount "${LOOP_DEV}p1" mnt/esp
 sudo mkdir -p mnt/esp/EFI/BOOT
 
-# Копировать ядро
-sudo cp "$KERNEL_FILE" mnt/esp/EFI/BOOT/BOOTX64.EFI
+# Копировать ядро (подписав его для Secure Boot, если можем).
+# EFI-stub bzImage — это и есть загружаемый прошивкой PE, поэтому подписываем
+# именно его. Подписанный образ прекрасно грузится и при ВЫКЛЮЧЕННОМ Secure Boot,
+# так что подписываем всегда. Если подпись недоступна (нет sbsign/openssl, напр.
+# в урезанном CI) — кладём неподписанное ядро и предупреждаем: сборка не рвётся.
+SIGN_SH="$ROOT/Сборка/подписать_ядро.sh"
+SIGNED_KERNEL="$(mktemp)"
+if [[ "${SECUREBOOT:-1}" != "0" ]] && "$SIGN_SH" "$KERNEL_FILE" "$SIGNED_KERNEL" 2>&1; then
+    echo "Ядро подписано для Secure Boot."
+    sudo cp "$SIGNED_KERNEL" mnt/esp/EFI/BOOT/BOOTX64.EFI
+else
+    echo "ВНИМАНИЕ: ядро НЕ подписано (нет инструментов или SECUREBOOT=0) —" >&2
+    echo "          Secure Boot не заработает, обычная загрузка не пострадает." >&2
+    sudo cp "$KERNEL_FILE" mnt/esp/EFI/BOOT/BOOTX64.EFI
+fi
+rm -f "$SIGNED_KERNEL"
 
 # ================================================
 # ВАРИАНТ 2: Мультизагрузочный конфиг для EFI
