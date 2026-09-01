@@ -45,8 +45,9 @@ fallback**, не конечная цель. См. раздел про ренде
 - `добавить_программу.sh` — утилита «закинуть ELF-программу в rootfs».
 - `ЗАДАЧИ.md` — анализ проекта и TODO.
 - `ОбразыДляЗагрузки/` — выходные образы (в .gitignore).
-- `.github/workflows/ci.yml` — CI: ОДНО задание (`apt` зависимостей + `make -C Сборка`,
-  как на обычном ПК; ccache-кэш ядра; без VBoxManage → артефакт только qcow2).
+- `.github/workflows/ci.yml` — CI: ОДНО задание (`apt` зависимостей + **свежие
+  meson/ninja из PyPI (venv)** + `make -C Сборка`, как на обычном ПК; ccache-кэш
+  ядра; без VBoxManage → артефакт только qcow2).
 
 ## Как собирать
 ```
@@ -121,7 +122,8 @@ cd Сборка && make          # оркестратор: программы �
 - **CI собирает бинарники в rootfs сам — ОДНИМ заданием `cd Сборка && make`**
   (как на обычном ПК; см. `.github/workflows/ci.yml`). Джоб `build`: checkout →
   init загрузочных субмодулей (`Ядро`, `busybox`, `Инициализация`, `weston`,
-  depth 1) → `apt` зависимостей → `make -C Сборка`. Оркестратор `основа.c` сам
+  depth 1) → `apt` зависимостей + **свежие meson/ninja из PyPI (venv)** → `make -C
+  Сборка`. Оркестратор `основа.c` сам
   строит ядро (bzImage), busybox, init, weston и создаёт образ. **НЕ дублируем
   шаги сборки в YAML** — это было раньше (3 джоба checks/kernel/image) и
   расходилось с `основа.c`; теперь один источник правды. Досев загрузчика
@@ -130,6 +132,26 @@ cd Сборка && make          # оркестратор: программы �
   прогонами через **ccache** (единственное ускорение: `PATH=/usr/lib/ccache` +
   `actions/cache`). VBoxManage на раннере нет → конвертация даёт только qcow2
   (артефакт), Secure Boot-enroll пропускается (не рвётся).
+
+### Тулчейн — политика «только свежее» (НЕ поддерживаем старьё/легаси)
+- **Везде требуем ПОСЛЕДНИЕ версии** компиляторов, meson, ninja, библиотек. Старый
+  тулчейн из дистрибутивных пакетов НЕ поддерживается, и костылей под него не держим.
+  Показательный кейс: `apt` на Ubuntu 24.04 замораживает **meson 1.3.2**, а проекту
+  нужен ≥1.10 → раньше сборка weston падала и обрастала костылями.
+- **CI**: meson/ninja НЕ из `apt` (там старьё), а последние из **PyPI в venv**
+  (`python3 -m venv ~/.venv-build` → `pip install -U meson ninja` → путь в `$GITHUB_PATH`).
+  gcc — штатный с раннера (он актуальный, не заморожен, в отличие от apt-meson).
+- **Проверки версий встроены и падают на старье** сразу и понятно:
+  `собрать-weston.sh` требует `meson >= 1.10` и `ninja >= 1.10` (иначе `exit 1` с
+  подсказкой `pip install -U meson ninja`); `Сборка/Makefile` — `gcc >= 13` (цель
+  `check-toolchain`, order-only prereq — гоняется каждую сборку, но не форсит
+  перекомпиляцию `основа.c`).
+- **Следствие — старомесоновые костыли УДАЛЕНЫ** (см. «патч №2» ниже: больше не
+  применяется). НЕ возвращать: если всплыла ошибка вида «requires argument not a
+  string» — это признак старого meson, чинится обновлением тулчейна, а не патчем.
+- ⚠ `wayland-стек` из пинованных subproject'ов — это НЕ «старьё», а НАОБОРОТ:
+  дистрибутивные `wayland-protocols`/`wayland-scanner` слишком СТАРЫЕ для weston 16,
+  поэтому берём свежие пины из сурсов (см. раздел Weston). Это часть той же политики.
 
 ### Ядро
 - Собирается **только `bzImage`** (без модулей). Модули (`=m`) **не устанавливаются**,
@@ -271,21 +293,16 @@ cd Сборка && make          # оркестратор: программы �
   фолбэка → при scanner из subproject (internal-dependency) падает «Could not get
   an internal variable». Дописываем `internal: 'wayland_scanner'` — ровно как
   апстрим уже делает строкой ниже для `pkgdatadir` wayland-protocols.
-- **Патч weston 16.0.0 №2 (`libweston/meson.build`, sed, идемпотентно) — совместимость
-  со СТАРЫМ meson на раннере.** `libweston/meson.build:173` генерит pkgconfig-файл
-  libweston с `requires_private: deps_for_libweston_users` (= `[dep_wayland_server,
-  dep_pixman, dep_xkbcommon]`). Когда wayland форсится из subproject'а (наш
-  `--force-fallback-for=wayland`), `dep_wayland_server` — это **InternalDependency**.
-  **Старый meson (Ubuntu 24.04 / GitHub runner даёт 1.3.2)** НЕ умеет класть
-  internal-dependency в `Requires.private` → падает `ERROR: requires argument not a
-  string … got <InternalDependency …>`. **Новый meson (≥ ~1.10) это проглатывает**
-  (резолвит pc-имя из `override_dependency`) — поэтому ЛОКАЛЬНО (свежий meson) сборка
-  проходит, а на CI со старым meson падает. Скрипт заменяет список объектов на их
-  **pkg-config-имена-строки** `['wayland-server', 'pixman-1', 'xkbcommon']` — валидный
-  `Requires.private` на ЛЮБОЙ версии meson и независимо от того, системный wayland или
-  subproject. Симптом на CI, если патч не сработал: ошибка `requires argument not a
-  string` в `libweston/meson.build`. (Альтернатива — поднять meson на раннере ≥1.10,
-  но патч надёжнее: не зависит от версии тулчейна хоста, в духе воспроизводимости.)
+- **«Патч №2» УДАЛЁН — это был костыль для СТАРОГО meson** (см. политику «только
+  свежее» выше). Раньше `собрать-weston.sh` переписывал в `libweston/meson.build`
+  `requires_private: deps_for_libweston_users` на строковые pc-имена
+  `['wayland-server','pixman-1','xkbcommon']`, потому что старый meson (1.3.2 из apt)
+  не умел класть `InternalDependency` (`dep_wayland_server` из форс-subproject'а) в
+  `Requires.private` → `requires argument not a string … got InternalDependency`.
+  Свежий meson (≥1.10, который мы теперь ТРЕБУЕМ) делает это сам — **проверено:
+  `meson setup --reconfigure` на 1.10.1 проходит без патча**. Костыль убран, НЕ
+  возвращать. Если ошибка `requires argument not a string` всплыла — значит где-то
+  протёк старый meson: обновляй тулчейн (`pip install -U meson`), а не патч.
 
 ### Загрузка / init
 - **cmdline ядра — из встроенного `CONFIG_CMDLINE`** (голый EFI-stub грузится

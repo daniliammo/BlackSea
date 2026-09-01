@@ -53,9 +53,32 @@ info() { printf '\033[1;34m»\033[0m %s\n' "$*"; }
 err()  { printf '\033[1;31m✗\033[0m %s\n' "$*" >&2; }
 
 [[ -f "$SRC/meson.build" ]] || { err "нет исходников weston: $SRC (субмодуль не инициализирован?)"; exit 1; }
-command -v meson >/dev/null || { err "нет meson"; exit 1; }
-command -v ninja >/dev/null || { err "нет ninja"; exit 1; }
 [[ -x "$ROOT/добавить_программу.sh" ]] || { err "нет $ROOT/добавить_программу.sh"; exit 1; }
+
+# --- ПОЛИТИКА: требуем СВЕЖИЙ тулчейн (старьё/легаси в проекте не держим) ------
+# apt замораживает meson на старой версии (Ubuntu 24.04 → 1.3.2), а она не умеет
+# ряд вещей (напр. класть InternalDependency в Requires.private) → сборка weston
+# падала, приходилось костылять. Костыль убран (см. отсутствие «патча №2» ниже):
+# просто требуем свежий meson (>= MESON_MIN), который это умеет сам. Ставить
+# последний: `pip install -U meson ninja` (на CI — из venv, см. .github/workflows/ci.yml).
+MESON_MIN="1.10"
+NINJA_MIN="1.10"
+# ver_lt A B → истина, если B СТАРЕЕ A (have B < min A). sort -V: если минимум не
+# оказался наименьшим в паре, значит have меньше минимума.
+ver_lt() { [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" != "$1" ]; }
+command -v meson >/dev/null || { err "нет meson. Поставь ПОСЛЕДНИЙ: pip install -U meson"; exit 1; }
+command -v ninja >/dev/null || { err "нет ninja. Поставь ПОСЛЕДНИЙ: pip install -U ninja"; exit 1; }
+meson_ver="$(meson --version 2>/dev/null || echo 0)"
+ninja_ver="$(ninja --version 2>/dev/null || echo 0)"
+if ver_lt "$MESON_MIN" "$meson_ver"; then
+    err "нужен meson >= $MESON_MIN (есть $meson_ver). Старый meson НЕ поддерживается — обнови: pip install -U meson"
+    exit 1
+fi
+if ver_lt "$NINJA_MIN" "$ninja_ver"; then
+    err "нужен ninja >= $NINJA_MIN (есть $ninja_ver). Обнови: pip install -U ninja"
+    exit 1
+fi
+info "тулчейн: meson $meson_ver, ninja $ninja_ver (требуется >= $MESON_MIN / $NINJA_MIN)"
 
 # 0. Fallback-subproject'ы для wayland-стека, чтобы сборка НЕ зависела от версий
 #    хостовых библиотек. weston 16.0.0 требует свежие wayland-protocols (>= 1.46)
@@ -115,21 +138,12 @@ if grep -q "get_variable(pkgconfig: 'wayland_scanner')" "$SCANNER_MB"; then
     sed -i "s/get_variable(pkgconfig: 'wayland_scanner')/get_variable(pkgconfig: 'wayland_scanner', internal: 'wayland_scanner')/" "$SCANNER_MB"
 fi
 
-# Патч weston 16.0.0 (№2): libweston/meson.build генерит pkgconfig-файл libweston с
-# «requires_private: deps_for_libweston_users» (= [dep_wayland_server, dep_pixman,
-# dep_xkbcommon]). Когда wayland форсится из subproject (наш --force-fallback-for=
-# wayland выше), dep_wayland_server становится InternalDependency. СТАРЫЙ meson на
-# GitHub-раннере (Ubuntu 24.04 даёт meson 1.3.2) НЕ умеет класть internal-dependency
-# в Requires.private → «requires argument not a string … got InternalDependency».
-# (Новый meson, напр. 1.10, это уже проглатывает — потому локально не воспроизводится,
-# а CI падает.) Requires.private в .pc всё равно ссылается по ИМЕНАМ pkg-config,
-# поэтому заменяем список объектов на их pc-имена: валидно на ЛЮБОЙ версии meson и
-# не зависит от того, системный wayland или subproject. Идемпотентно (grep-guard).
-LIBW_MB="$SRC/libweston/meson.build"
-if grep -q "requires_private: deps_for_libweston_users," "$LIBW_MB"; then
-    info "Патчу libweston/meson.build: requires_private по pc-именам (совместимо со старым meson)…"
-    sed -i "s/requires_private: deps_for_libweston_users,/requires_private: ['wayland-server', 'pixman-1', 'xkbcommon'],/" "$LIBW_MB"
-fi
+# (Раньше здесь был «патч №2»: libweston/meson.build генерит .pc с
+# «requires_private: deps_for_libweston_users», куда при форсе wayland из
+# subproject попадает InternalDependency; СТАРЫЙ meson (1.3.2 из apt) не умел
+# класть её в Requires.private и падал. УДАЛЁН: по политике проекта требуем свежий
+# meson (>= MESON_MIN, см. проверку версий выше), а он это делает сам — проверено
+# на 1.10.1: reconfigure проходит без патча. Старьё не поддерживаем принципиально.)
 
 # Форсим wayland-стек из subproject'ов (независимость от версий хоста) и гасим
 # необязательную обвязку wayland (docs/тесты/DTD-валидация тянут doxygen/xmlto/
