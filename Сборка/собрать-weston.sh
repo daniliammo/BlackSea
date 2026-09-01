@@ -48,6 +48,26 @@ command -v meson >/dev/null || { err "нет meson"; exit 1; }
 command -v ninja >/dev/null || { err "нет ninja"; exit 1; }
 [[ -x "$ROOT/добавить_программу.sh" ]] || { err "нет $ROOT/добавить_программу.sh"; exit 1; }
 
+# 0. wayland-protocols: weston 16.0.0 требует >= 1.46 и объявляет fallback на
+#    subproject 'wayland-protocols', но САМ .wrap в апстриме не поставляет. На
+#    рантайм-хосте (напр. GitHub runner) pkg-config даёт лишь 1.45 → meson падает
+#    «Neither a subproject directory nor a wayland-protocols.wrap file was found».
+#    Кладём .wrap в subprojects/ до setup. Источник — канонический freedesktop
+#    gitlab (надёжного github-зеркала wayland-protocols не существует; оттуда же
+#    тянется display-info). Тег 1.46 = минимум по требованию, fetch-абелен depth 1.
+info "Готовлю wrap wayland-protocols (fallback subproject)…"
+mkdir -p "$SRC/subprojects"
+cat > "$SRC/subprojects/wayland-protocols.wrap" <<'WRAP'
+[wrap-git]
+directory = wayland-protocols
+url = https://gitlab.freedesktop.org/wayland/wayland-protocols.git
+revision = 1.46
+depth = 1
+
+[provide]
+wayland-protocols = wayland_protocols
+WRAP
+
 # 1. Конфигурация meson (идемпотентно) и сборка.
 info "Конфигурирую weston (meson, prefix=$PREFIX)…"
 # meson-info появляется только после успешной конфигурации. Если его нет
