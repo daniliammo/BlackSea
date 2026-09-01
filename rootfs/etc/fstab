@@ -5,4 +5,7 @@ sysfs     /sys             sysfs     rw,nosuid,noexec,relatime,async 0  0
 tmpfs     /run             tmpfs     rw,nosuid,nodev,mode=0755        0  0
 tmpfs     /tmp             tmpfs     rw,nosuid,nodev                  0  0
 
-PARTUUID=77A7-77A7  /boot  vfat      rw,nosuid,noexec,relatime,sync  0  2
+# /boot (ESP) намеренно НЕ монтируем на рантайме: минимальной ОС он не нужен, а
+# прежняя строка «PARTUUID=77A7-77A7 /boot vfat» ломала mount -a — 77A7-77A7 это
+# FAT-серийник, а НЕ PARTUUID (реальный GUID ESP — 77a70000-0000-0000-0000-000000000000),
+# busybox его не резолвит. Нужен доступ к ESP — монтируйте вручную по метке EFI.
