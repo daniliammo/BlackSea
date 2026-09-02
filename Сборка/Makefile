@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O3 -s -fdata-sections -ffunction-sections -Wl,--gc-sections -flto -fno-stack-protector
+CFLAGS = -Wall -Wextra -Werror -O3 -s -fdata-sections -ffunction-sections -Wl,--gc-sections -flto -fno-stack-protector
 TARGET = Собранное/Сборка
 SRC = основа.c
 
