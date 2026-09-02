@@ -284,7 +284,19 @@ cd Сборка && make          # оркестратор: программы �
   ломают API weston 16 — НЕ поднимать). Все .wrap — `depth = 1` на тег. Обвязка
   wayland (docs/tests/dtd_validation) выключена — иначе тянет doxygen/xmlto/libxml2.
   Билд-deps хоста для сборки wayland из сурсов: **`libffi-dev`, `libexpat1-dev`**
-  (добавлены в `ci.yml`). Апстримные .wrap (в самом субмодуле) не поставляют
+  (добавлены в `ci.yml`). **Плюс ОБЯЗАТЕЛЬНО `libwayland-dev`** — несмотря на
+  wayland-из-subproject'а! weston 16.0.0 в `libweston/meson.build` пробрасывает
+  wayland-зависимость в `session-helper` (`launcher-libseat.c`) через
+  `partial_dependency(compile_args: true)` — БЕЗ `includes`, поэтому путь к
+  `<wayland-server.h>` из subproject'а ТЕРЯЕТСЯ, и компиляция падает
+  «wayland-server.h: No such file». Базовый dev-заголовок берём из системного
+  `libwayland-dev` (на машине разработчика он и так есть — потому локально сборка
+  идёт, а урезанный CI падал). Subproject остаётся ради СВЕЖИХ scanner/protocols
+  (версии), не ради базовых заголовков; линкуется libwayland из subproject'а
+  (force-fallback), из системы нужен ЛИШЬ заголовок — версия apt-пакета не важна.
+  НЕ убирать `libwayland-dev` из CI (это не «системное старьё», а стабильный
+  базовый заголовок; политика «свежий тулчейн» касается компиляторов/meson/ninja).
+  Апстримные .wrap (в самом субмодуле) не поставляют
   wayland/wayland-protocols и не переживают чистый клон на теге — потому генерим
   из скрипта. `edid-decode` (nested-wrap в display-info, `git.linuxtv.org`) иногда
   отдаёт 502 и РАНЬШЕ РОНЯЛ `meson setup` на CI («failed to clone edid…»): его

@@ -100,18 +100,27 @@ Ubuntu/Debian (совпадает со списком в `.github/workflows/ci.y
 
 ```bash
 sudo apt-get install -y \
-  build-essential file binutils meson ninja-build pkg-config python3 \
-  libffi-dev libexpat1-dev \
+  build-essential file binutils pkg-config python3 python3-venv python3-pip \
+  libwayland-dev libffi-dev libexpat1-dev \
   libinput-dev libxkbcommon-dev libudev-dev libevdev-dev libmtdev-dev \
   libpixman-1-dev libdrm-dev libgbm-dev libegl-dev libgles2-mesa-dev \
   mesa-common-dev libgl-dev \
   libcairo2-dev libpango1.0-dev libfreetype-dev libfontconfig-dev \
   libpng-dev libjpeg-dev libwebp-dev liblcms2-dev libseat-dev
+
+# meson/ninja — ПОСЛЕДНИЕ из PyPI (НЕ из apt: там старьё, напр. meson 1.3.2 на
+# Ubuntu 24.04, а нужен >= 1.10 — собрать-weston.sh на старом падает с подсказкой).
+pip install -U meson ninja        # или: python3 -m venv ~/.venv-build && ~/.venv-build/bin/pip install -U meson ninja
 ```
 
-`libffi-dev` и `libexpat1-dev` нужны для сборки самого **wayland** из subproject'а
-(его тянет force-fallback). Ставить конкретные версии `libwayland-dev` /
-`wayland-protocols` **не требуется** — их версии-пины собираются из исходников.
+- `libwayland-dev` **обязателен**, хотя wayland и собирается из subproject'а: weston
+  16.0.0 не пробрасывает include-путь subproject-wayland в `session-helper`, поэтому
+  базовый `<wayland-server.h>` берётся из системного пакета (иначе
+  `wayland-server.h: No such file`). Его ВЕРСИЯ не важна — линкуется libwayland из
+  subproject'а (force-fallback), из системы нужен лишь заголовок.
+- `libffi-dev`, `libexpat1-dev` — для сборки самого **wayland** из сурсов.
+- Версии `wayland-protocols` / `wayland-scanner` из apt значения не имеют — берутся
+  свежие пины из исходников (subproject).
 
 > Установка weston идёт в `/usr/local` (хелперы зовутся по абсолютным путям). Скрипт
 > использует `sudo` только если каталог не писабелен. Чтобы собирать weston без рута
