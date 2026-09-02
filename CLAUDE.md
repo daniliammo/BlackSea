@@ -287,7 +287,13 @@ cd Сборка && make          # оркестратор: программы �
   (добавлены в `ci.yml`). Апстримные .wrap (в самом субмодуле) не поставляют
   wayland/wayland-protocols и не переживают чистый клон на теге — потому генерим
   из скрипта. `edid-decode` (nested-wrap в display-info, `git.linuxtv.org`) иногда
-  отдаёт 502 — НЕ фатально: display-info отключает его (нужен лишь своим тестам).
+  отдаёт 502 и РАНЬШЕ РОНЯЛ `meson setup` на CI («failed to clone edid…»): его
+  `test/meson.build` делает `subproject('edid-decode', required: false)`, но
+  провал git-клона wrap фатален. `собрать-weston.sh` НЕЙТРАЛИЗУЕТ это: кладёт в
+  общий `subprojects/edid-decode/` ПУСТОЙ subproject (`project('edid-decode')`) —
+  meson ищет subproject'ы в верхнем каталоге, заглушка перекрывает nested-wrap,
+  сеть для него не трогается. edid-decode нужен лишь тестам display-info (мы их
+  не собираем), так что заглушки достаточно.
   Плюс `собрать-weston.sh` патчит `protocol/meson.build` (sed, идемпотентно): у
   weston 16.0.0 там `get_variable(pkgconfig: 'wayland_scanner')` без internal-
   фолбэка → при scanner из subproject (internal-dependency) падает «Could not get

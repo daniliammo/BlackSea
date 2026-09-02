@@ -126,6 +126,21 @@ depth = 1
 libdisplay-info = libdisplay_info_dep
 WRAP
 
+# Нейтрализуем nested-wrap `edid-decode` из libdisplay-info. Её test/meson.build
+# делает `subproject('edid-decode', required: false)`, а тот .wrap тянет
+# git.linuxtv.org (нет depth, полный клон) — сервер регулярно отдаёт 502 и meson
+# ПАДАЕТ на setup (частый сбой CI: «failed to clone edid…»), хотя edid-decode
+# нужен ЛИШЬ тестам libdisplay-info, а тесты мы не собираем. meson ищет
+# subproject'ы в ОБЩЕМ (верхнем) каталоге subprojects/, поэтому кладём сюда
+# ПУСТОЙ subproject `edid-decode` с тем же именем — он перекрывает nested-wrap,
+# и сеть для него не трогается вовсе. Идемпотентно.
+mkdir -p "$SRC/subprojects/edid-decode"
+cat > "$SRC/subprojects/edid-decode/meson.build" <<'MB'
+# Заглушка: перекрывает flaky nested-wrap edid-decode (git.linuxtv.org, 502).
+# edid-decode нужен только тестам libdisplay-info, которые мы не собираем.
+project('edid-decode', version : '0.0.0')
+MB
+
 # Патч weston 16.0.0: protocol/meson.build берёт путь до wayland-scanner ТОЛЬКО
 # как pkgconfig-переменную. Когда scanner приходит из subproject (наш форс выше),
 # это internal-dependency → get_variable(pkgconfig:) падает с «Could not get an
