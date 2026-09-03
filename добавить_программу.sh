@@ -90,7 +90,16 @@ logical_path() {
 # зависимости (cairo/pango/glibc) по-прежнему берутся из системного кэша.
 run_ldd() {
     if [[ -n "$DESTDIR" ]]; then
-        LD_LIBRARY_PATH="$DESTDIR/usr/local/lib/x86_64-linux-gnu:$DESTDIR/usr/local/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$@"
+        local wl="$DESTDIR/usr/local/lib/x86_64-linux-gnu"
+        # Плюс подкаталоги модулей weston (weston/, libweston-*/): там лежит
+        # libexec_weston.so.0, на которую ссылается сам бинарник weston (его RUNPATH
+        # указывает в эти каталоги). Без них ldd её не находит → шумное «не найдена
+        # зависимость» (не фатально, но лог грязный) и она не попадала бы в lib64.
+        local extra="" d
+        for d in "$wl"/weston "$wl"/libweston-*; do
+            [[ -d "$d" ]] && extra="$extra:$d"
+        done
+        LD_LIBRARY_PATH="$wl:$DESTDIR/usr/local/lib$extra${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" ldd "$@"
     else
         ldd "$@"
     fi
