@@ -29,14 +29,19 @@ jobs:
           submodules: false
           fetch-depth: 1
 
-      # Инициализируем ТОЛЬКО загрузочные субмодули (depth 1 достаточно для сборки).
-      # Остальные Программы/* (ТранспиляторКонда и т.п.) не нужны для образа —
-      # основа.c пропускает пустые/уна­циализированные каталоги (нет Makefile).
-      - name: Инициализация субмодулей (Ядро, busybox, Инициализация, weston)
+      # Инициализируем загрузочные субмодули + ТранспиляторКонда (depth 1 достаточно
+      # для сборки). ТранспиляторКонда НУЖЕН: init теперь на Konda — Программы/
+      # Инициализация транспилируется собранным ../ТранспиляторКонда/Собранное/
+      # ТранспиляторКонда (оркестратор строит его ПЕРВЫМ, хойстом). Без этого
+      # субмодуля init не соберётся («ТранспиляторКонда: No such file», код 127).
+      # Прочие Программы/* (KondaFromClang и т.п.) для образа не нужны — основа.c
+      # пропускает пустые/неинициализированные каталоги (нет Makefile).
+      - name: Инициализация субмодулей (Ядро, busybox, Инициализация, ТранспиляторКонда, weston)
         run: |
           git submodule update --init --depth 1 \
             "Программы/Ядро" "Программы/busybox" \
-            "Программы/Инициализация" "Программы/weston"
+            "Программы/Инициализация" "Программы/ТранспиляторКонда" \
+            "Программы/weston"
 
       # Всё, что нужно для ядра + busybox + weston (wayland из subproject'ов) +
       # создания образа (loop/parted/mkfs) + qcow2 (qemu-img). ВАЖНО: meson/ninja
@@ -58,6 +63,7 @@ jobs:
             build-essential file binutils ccache \
             flex bison libssl-dev libelf-dev bc libncurses-dev dwarves cpio kmod \
             pkg-config python3 python3-venv python3-pip \
+            libjemalloc2 \
             libwayland-dev libffi-dev libexpat1-dev \
             libinput-dev libxkbcommon-dev libudev-dev libevdev-dev libmtdev-dev \
             libpixman-1-dev libdrm-dev libgbm-dev libegl-dev libgles2-mesa-dev \
@@ -65,17 +71,36 @@ jobs:
             libcairo2-dev libpango1.0-dev libfreetype-dev libfontconfig-dev \
             libpng-dev libjpeg-dev libwebp-dev liblcms2-dev libseat-dev \
             parted gdisk dosfstools e2fsprogs symlinks util-linux libc-bin qemu-utils
-          # ПОЛИТИКА «только свежий тулчейн»: последние meson+ninja из PyPI в venv,
-          # кладём в PATH для следующих шагов (gcc берём штатный с раннера — он
-          # актуальный, не заморожен, в отличие от meson). Проверки версий и падение
-          # на старье делает сама сборка (собрать-weston.sh, Сборка/Makefile).
+          # ПОЛИТИКА «только свежий тулчейн», ч.1: последние meson+ninja из PyPI в
+          # venv, кладём в PATH для следующих шагов. Проверки версий и падение на
+          # старье делает сама сборка (собрать-weston.sh, Сборка/Makefile).
           python3 -m venv "$HOME/.venv-build"
           "$HOME/.venv-build/bin/pip" install --upgrade pip meson ninja
           echo "$HOME/.venv-build/bin" >> "$GITHUB_PATH"
+
+      # ПОЛИТИКА «только свежий тулчейн», ч.2 — gcc. Раннер (Ubuntu 24.04) даёт
+      # gcc 13.3, но ТранспиляторКонда (init теперь на Konda) ТРЕБУЕТ gcc >= 15:
+      # его Makefile гейтит явной ошибкой (musttail → гарантированный TCO + полный
+      # C23/-std=gnu23, которого нет у gcc-13), и его внутренний cc собирает
+      # сгенерированный init.elf под C23. Ставим gcc-15 из ubuntu-toolchain-r/test
+      # и делаем его дефолтным gcc/cc/g++/c++ — тогда ВЕСЬ билд (ядро, busybox,
+      # основа.c, транспилятор, weston) идёт свежим gcc, как на машине разработчика
+      # (у неё cc = gcc 15). Раннерный gcc-13 «свежим» уже не считается.
+      - name: Свежий gcc-15 (политика проекта; ТранспиляторКонда требует gcc >= 15)
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc-15 g++-15
+          for pair in "gcc:gcc-15" "g++:g++-15" "cc:gcc-15" "c++:g++-15"; do
+            name="${pair%%:*}"; impl="${pair##*:}"
+            sudo update-alternatives --install "/usr/bin/$name" "$name" "/usr/bin/$impl" 100
+            sudo update-alternatives --set "$name" "/usr/bin/$impl"
+          done
           echo "--- версии тулчейна ---"
+          gcc --version | head -1
+          cc  --version | head -1
           "$HOME/.venv-build/bin/meson" --version
           "$HOME/.venv-build/bin/ninja" --version
-          gcc --version | head -1
 
       # Единственное «не лишнее» ускорение: кэш ccache между прогонами. Без него
       # ядро (bzImage) компилируется с нуля каждый push (~20–40 мин). ccache
