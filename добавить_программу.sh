@@ -32,6 +32,15 @@ STRIP="${STRIP:-0}"              # STRIP=1 — ужать strip'ом (эконо
 AUTO_WESTON="${AUTO_WESTON:-1}"  # 0 — не подхватывать каталоги модулей weston
 UPDATE_LIBC="${UPDATE_LIBC:-1}"  # 1 — автоматически обновлять glibc в дистрибутиве,
                                  #     если программе нужен более новый GLIBC_*
+INSTALL_AS="${INSTALL_AS:-}"     # если задан — класть бинарник ИМЕННО по этому пути
+                                 #     ВНУТРИ rootfs (напр. /sbin/init), а не в bin/ по
+                                 #     эвристике. Зависимости всё равно идут в lib64.
+                                 #     Так оркестратору не нужно копировать ELF самому:
+                                 #     скрипт и кладёт бинарник, и досевает его либы —
+                                 #     единым вызовом (не остаётся программы без нужной
+                                 #     библиотеки; был инцидент: init на Konda линкуется
+                                 #     с libjemalloc.so.2, при прямом копировании её не
+                                 #     клали в lib64 → init не грузился).
 
 # DESTDIR — если задан, программа установлена в STAGING-каталог: на диске файлы лежат
 # по $DESTDIR + логический путь (напр. $DESTDIR/usr/local/bin/weston), а «логический»
@@ -139,6 +148,21 @@ process_bin() {
     info "Бинарник: $binname  ($bin)"
     resolve_deps "$bin"
 
+    # INSTALL_AS — явный путь внутри rootfs (напр. /sbin/init): кладём бинарник
+    # ровно туда, минуя эвристику bin/usr-local. rm -f снимает возможный симлинк
+    # (busybox `make install` делает /sbin/init → busybox; без rm cp -L писал бы
+    # ПО симлинку и затирал сам busybox), потом кладём свежий обычный файл.
+    if [[ -n "$INSTALL_AS" ]]; then
+        local out="$ROOTFS_DIR$INSTALL_AS"
+        mkdir -p "$(dirname "$out")"
+        rm -f "$out"
+        cp -L "$bin" "$out"
+        chmod 0755 "$out"
+        maybe_strip "$out"
+        ok "бинарник → ${out#"$ROOTFS_DIR"}"
+        return 0
+    fi
+
     # Выбор каталога назначения. Программы из /usr/local/ (bin, sbin, libexec)
     # зовутся по АБСОЛЮТНОМУ пути: weston грузит хелперы из /usr/local/libexec,
     # а weston-desktop-shell запускает /usr/local/bin/weston-terminal. Поэтому
@@ -152,10 +176,12 @@ process_bin() {
         *)            destdir="$BIN_DIR" ;;
     esac
     mkdir -p "$destdir"
+    rm -f "$destdir/$binname"    # снять возможный симлинк (busybox-applet), иначе
+                                 # cp -L писал бы ПО нему и затирал busybox
     cp -L "$bin" "$destdir/$binname"
     chmod 0755 "$destdir/$binname"
     maybe_strip "$destdir/$binname"
-    ok "бинарник → ${destdir#$ROOTFS_DIR}/$binname"
+    ok "бинарник → ${destdir#"$ROOTFS_DIR"}/$binname"
 }
 
 # Обработать каталог модулей: зеркалировать *.so по абсолютному пути + их deps.
