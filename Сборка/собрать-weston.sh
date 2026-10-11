@@ -153,6 +153,20 @@ if grep -q "get_variable(pkgconfig: 'wayland_scanner')" "$SCANNER_MB"; then
     sed -i "s/get_variable(pkgconfig: 'wayland_scanner')/get_variable(pkgconfig: 'wayland_scanner', internal: 'wayland_scanner')/" "$SCANNER_MB"
 fi
 
+# Патч weston main (после 16.0.0): shared/client-buffer-util.c включает
+# «weston-restricted-buffer-client-protocol.h», но dep_client_buffer в
+# shared/meson.build не перечисляет этот сгенерированный заголовок. Апстрим не
+# замечает: заголовок генерят simple-clients/тесты, а мы их выключаем → сборка
+# weston-screenshooter падает «No such file». Дописываем заголовок в sources
+# (только .h — интерфейс-символы .c не нужны: enable() не конструктор).
+# Идемпотентно: патчим, только если заголовка в блоке ещё нет.
+SHARED_MB="$SRC/shared/meson.build"
+if grep -q "'client-buffer-util.c'," "$SHARED_MB" &&
+   ! sed -n "/^dep_client_buffer = /,/^)/p" "$SHARED_MB" | grep -q weston_restricted_buffer_client_protocol_h; then
+    info "Патчу shared/meson.build: заголовок restricted-buffer для client-buffer…"
+    sed -i "s/^\(\t*\)'client-buffer-util.c',$/&\n\1weston_restricted_buffer_client_protocol_h,/" "$SHARED_MB"
+fi
+
 # (Раньше здесь был «патч №2»: libweston/meson.build генерит .pc с
 # «requires_private: deps_for_libweston_users», куда при форсе wayland из
 # subproject попадает InternalDependency; СТАРЫЙ meson (1.3.2 из apt) не умел

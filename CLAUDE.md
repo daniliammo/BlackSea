@@ -380,6 +380,12 @@ cd Сборка && make          # оркестратор: программы �
   фолбэка → при scanner из subproject (internal-dependency) падает «Could not get
   an internal variable». Дописываем `internal: 'wayland_scanner'` — ровно как
   апстрим уже делает строкой ниже для `pkgdatadir` wayland-protocols.
+  И (с переходом на `main`) патчит `shared/meson.build`: `client-buffer-util.c`
+  включает `weston-restricted-buffer-client-protocol.h`, а `dep_client_buffer` этот
+  сгенерированный заголовок не перечисляет — апстрим не видит (его генерят
+  simple-clients/тесты, которые мы выключаем) → падал `weston-screenshooter`.
+  Дописываем `weston_restricted_buffer_client_protocol_h` в sources (идемпотентно).
+  Хосту для сборки нужен и **`libinput-dev`** (в `ci.yml` есть).
 - **«Патч №2» УДАЛЁН — это был костыль для СТАРОГО meson** (см. политику «только
   свежее» выше). Раньше `собрать-weston.sh` переписывал в `libweston/meson.build`
   `requires_private: deps_for_libweston_users` на строковые pc-имена
