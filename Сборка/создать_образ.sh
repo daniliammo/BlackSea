@@ -122,10 +122,13 @@ ROOTFS_MB=$(( (ROOTFS_SIZE + 1048576) / 1048576 ))
 # EXTRA_MB=$(( ROOTFS_MB / 2 + 50 ))
 # TOTAL_ROOT_MB=$(( ROOTFS_MB + EXTRA_MB ))
 # TOTAL_ROOT_MB=$( ROOTFS_MB )
-# ESP держим >= 48 МБ: FAT32 требует минимум 65525 кластеров, а при 512-байтных
-# кластерах это ~34 МБ. На меньшем разделе mkfs.vfat -F32 делает НЕвалидный FAT32,
-# и UEFI (в т.ч. EFI VirtualBox) отказывается грузиться — «нет загрузочного носителя».
-ESP_MB=48
+# ESP_MB — КОНЕЦ раздела (начало 1 MiB), т.е. сам ESP = ESP_MB-1 = 34 МиБ.
+# Это минимум с запасом: FAT32 требует >= 65525 кластеров, при 512-байтных
+# кластерах это ~33 МиБ раздела (34 МиБ дают ~68500 кластеров). На меньшем разделе
+# mkfs.vfat -F32 делает НЕвалидный FAT32, и UEFI (в т.ч. EFI VirtualBox) отказывается
+# грузиться — «нет загрузочного носителя». НЕ уменьшать; FAT16 не берём — часть
+# прошивок реальных ПК не принимает FAT16-ESP на несъёмном диске.
+ESP_MB=35
 # Запас под накладные расходы ext4 (журнал ~4 МБ, таблицы inode, резерв) плюс
 # немного места для работы системы. Иначе rootfs не влезает в раздел.
 ROOT_EXTRA_MB=$(( ROOTFS_MB / 3 + 40 ))
@@ -176,6 +179,12 @@ fi
 echo ""
 echo "Форматирую разделы..."
 sudo mkfs.vfat -F 32 -n "EFI" -i "${BOOT_FAT_SERIAL//-/}" "${LOOP_DEV}p1"
+# Страховка к ESP_MB: FAT32 с < 65525 кластеров невалиден → UEFI его не увидит.
+ESP_CLUSTERS=$(sudo fsck.fat -n -v "${LOOP_DEV}p1" | awk '/data clusters/{print $1}')
+if [[ -z "$ESP_CLUSTERS" || "$ESP_CLUSTERS" -lt 65525 ]]; then
+    echo "Ошибка: в ESP ${ESP_CLUSTERS:-?} кластеров (< 65525) — невалидный FAT32, увеличь ESP_MB" >&2
+    exit 1
+fi
 sudo mkfs.ext4 -m 1 -L "ROOTFS" -U "$ROOT_UUID" -O ^metadata_csum,^64bit "${LOOP_DEV}p2"
 
 # Проставляем GUID разделов в таблице GPT (это PARTUUID, не UUID ФС).
